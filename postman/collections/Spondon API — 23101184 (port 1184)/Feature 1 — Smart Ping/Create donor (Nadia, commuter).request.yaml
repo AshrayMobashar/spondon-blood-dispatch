@@ -1,0 +1,18 @@
+$kind: http-request
+url: "{{baseUrl}}/api/donors"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "name": "Nadia Akter",
+      "blood_type": "O+",
+      "fcm_token": "fcm_nadia_3b70"
+    }
+scripts:
+  - type: afterResponse
+    code: pm.collectionVariables.set('donor2_id', pm.response.json().id);
+    language: text/javascript
+order: 2000

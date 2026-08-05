@@ -1,0 +1,13 @@
+# Use this workspace to collaborate
+workspace:
+  id: fc1d8720-e770-46bb-8a89-93d74b16f1be
+
+cloudResources:
+  collections:
+    ../postman/collections/Spondon API — 23101184 (port 1184): c26cbb70-e3a0-4765-a5a0-b08a1869afc6
+
+# All resources in the `postman/` folder are automatically registered in Local View.
+# Point to additional files outside the `postman/` folder to register them individually. Example:
+#localResources:
+#  collections:
+#    - ../tests/E2E Test Collection/

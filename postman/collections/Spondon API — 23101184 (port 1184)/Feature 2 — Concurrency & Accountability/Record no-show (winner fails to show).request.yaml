@@ -1,0 +1,13 @@
+$kind: http-request
+url: "{{baseUrl}}/api/requests/{{request2_id}}/arrival"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "donor_id": "{{donor_id}}",
+      "showed_up": false
+    }
+order: 6000

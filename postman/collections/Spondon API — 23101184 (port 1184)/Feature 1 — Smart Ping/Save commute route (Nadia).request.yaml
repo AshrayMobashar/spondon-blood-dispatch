@@ -1,0 +1,13 @@
+$kind: http-request
+url: "{{baseUrl}}/api/donors/{{donor2_id}}/commute-route"
+method: PUT
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "segments": ["Mirpur-Rd", "Kazipara", "Shewrapara"],
+      "label": "Home to Office"
+    }
+order: 8000

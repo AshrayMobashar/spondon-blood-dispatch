@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{baseUrl}}/api/donors/{{donor_id}}/reliability"
+method: GET
+order: 7000

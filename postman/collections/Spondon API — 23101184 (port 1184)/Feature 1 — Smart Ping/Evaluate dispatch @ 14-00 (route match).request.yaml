@@ -1,0 +1,14 @@
+$kind: http-request
+name: Evaluate dispatch @ 14:00 (route match)
+url: "{{baseUrl}}/api/dispatch/evaluate"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "request_id": "{{request_id}}",
+      "now": "14:00"
+    }
+order: 12000

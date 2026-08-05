@@ -1,0 +1,14 @@
+$kind: http-request
+name: Evaluate dispatch @ 23:30 (breakthrough vs skip)
+url: "{{baseUrl}}/api/dispatch/evaluate"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "request_id": "{{request_id}}",
+      "now": "23:30"
+    }
+order: 11000

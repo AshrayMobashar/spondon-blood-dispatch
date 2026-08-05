@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{baseUrl}}/api/ping-logs?request_id={{request_id}}"
+method: GET
+queryParams:
+  request_id: "{{request_id}}"
+order: 13000

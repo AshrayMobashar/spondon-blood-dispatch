@@ -1,0 +1,17 @@
+$kind: http-request
+name: "Update sleep mode (Nadia: no override)"
+url: "{{baseUrl}}/api/donors/{{donor2_id}}/sleep-mode"
+method: PUT
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "enabled": true,
+      "start": "23:00",
+      "end": "07:00",
+      "allow_extreme_emergencies": false,
+      "dnd_on": false
+    }
+order: 7000

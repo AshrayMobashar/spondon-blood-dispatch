@@ -1,0 +1,18 @@
+$kind: http-request
+url: "{{baseUrl}}/api/appeals"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "donor_id": "{{donor_id}}",
+      "request_id": "{{request2_id}}",
+      "reason": "Road accident on the way — hospital records attached."
+    }
+scripts:
+  - type: afterResponse
+    code: pm.collectionVariables.set('appeal_id', pm.response.json().id);
+    language: text/javascript
+order: 8000

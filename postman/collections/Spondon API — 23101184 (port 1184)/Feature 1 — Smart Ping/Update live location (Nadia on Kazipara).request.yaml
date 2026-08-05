@@ -1,0 +1,14 @@
+$kind: http-request
+url: "{{baseUrl}}/api/donors/{{donor2_id}}/location"
+method: PUT
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "lat": 23.8069,
+      "lng": 90.3687,
+      "road_segment": "Kazipara"
+    }
+order: 9000

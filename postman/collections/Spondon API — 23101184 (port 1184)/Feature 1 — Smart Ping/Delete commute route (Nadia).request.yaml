@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{baseUrl}}/api/donors/{{donor2_id}}/commute-route"
+method: DELETE
+order: 14000

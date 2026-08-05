@@ -1,0 +1,13 @@
+$kind: http-request
+url: "{{baseUrl}}/api/appeals/{{appeal_id}}/resolve"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "action": "CLEAR",
+      "admin": "admin.sadia"
+    }
+order: 9000

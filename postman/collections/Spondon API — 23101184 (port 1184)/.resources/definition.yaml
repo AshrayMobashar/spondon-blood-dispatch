@@ -1,0 +1,9 @@
+$kind: collection
+description: "Emergency blood-dispatch APIs. Feature 1: Smart Ping (Sleep Mode & Commute-Aware Matching). Feature 2: Concurrency Lock & Flake-Out Accountability. Run the requests top-to-bottom: create requests auto-save ids into collection variables used by later calls."
+variables:
+  baseUrl: http://localhost:1184
+  donor_id: ""
+  donor2_id: ""
+  request_id: ""
+  request2_id: ""
+  appeal_id: ""

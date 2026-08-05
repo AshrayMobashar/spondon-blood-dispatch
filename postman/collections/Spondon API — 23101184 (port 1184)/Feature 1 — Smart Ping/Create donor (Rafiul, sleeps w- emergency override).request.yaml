@@ -1,0 +1,21 @@
+$kind: http-request
+name: Create donor (Rafiul, sleeps w/ emergency override)
+url: "{{baseUrl}}/api/donors"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "name": "Rafiul Islam",
+      "blood_type": "O+",
+      "fcm_token": "fcm_rafiul_9f21"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.collectionVariables.set('donor_id', pm.response.json().id);
+      pm.test('201 created', () => pm.response.code === 201);
+    language: text/javascript
+order: 1000

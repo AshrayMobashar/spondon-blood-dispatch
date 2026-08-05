@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{baseUrl}}/api/donors/{{donor_id}}/sleep-mode"
+method: GET
+order: 6000

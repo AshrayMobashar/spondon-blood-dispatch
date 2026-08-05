@@ -1,0 +1,20 @@
+$kind: http-request
+url: "{{baseUrl}}/api/requests"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "patient_name": "Karim Uddin",
+      "hospital": "Square Hospital",
+      "blood_type": "O+",
+      "severity": "CRITICAL",
+      "road_segment": "Panthapath"
+    }
+scripts:
+  - type: afterResponse
+    code: pm.collectionVariables.set('request2_id', pm.response.json().id);
+    language: text/javascript
+order: 1000

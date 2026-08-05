@@ -1,0 +1,4 @@
+$kind: http-request
+url: "{{baseUrl}}/api/donors/{{donor_id}}"
+method: GET
+order: 4000
