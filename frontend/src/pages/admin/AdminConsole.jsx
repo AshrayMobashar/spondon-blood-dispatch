@@ -16,8 +16,13 @@ const slipColor = {
 }
 const acctColor = { ACTIVE: 'success', BANNED: 'primary', SHADOW_BANNED: 'donor' }
 const acctLabel = { ACTIVE: 'Active', BANNED: 'Banned', SHADOW_BANNED: 'Shadow-banned' }
+const certColor = { PENDING: 'warning', APPROVED: 'success', REJECTED: 'primary' }
+const escColor = { OPEN: 'warning', SOURCED: 'success', CLOSED: 'admin' }
 
-const TABS = ['Emergency Ripples', 'Slip Verification', 'Accounts']
+const TABS = [
+  'Emergency Ripples', 'Slip Verification', 'Accounts',
+  'Medical Certificates', 'Escalations',
+]
 
 export default function AdminConsole() {
   const navigate = useNavigate()
@@ -27,6 +32,8 @@ export default function AdminConsole() {
   const [overview, setOverview] = useState(null)
   const [requests, setRequests] = useState([])
   const [donors, setDonors] = useState([])
+  const [certificates, setCertificates] = useState([])
+  const [escalations, setEscalations] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState(null) // { kind: 'ok'|'err', text }
@@ -41,14 +48,18 @@ export default function AdminConsole() {
     setLoading(true)
     setError('')
     try {
-      const [o, r, d] = await Promise.all([
+      const [o, r, d, c, e] = await Promise.all([
         adminApi.overview(),
         adminApi.requests(),
         adminApi.donors(),
+        adminApi.certificates(),
+        adminApi.escalations(),
       ])
       setOverview(o)
       setRequests(r)
       setDonors(d)
+      setCertificates(c)
+      setEscalations(e)
     } catch (err) {
       if (err.status === 401) {
         clearSession()
@@ -100,6 +111,11 @@ export default function AdminConsole() {
     act(r.id, () => adminApi.deleteRequest(r.id), () => 'Request deleted.')
   const moderate = (d, action, reason) =>
     act(d.id, () => adminApi.moderate(d.id, action, reason), (res) => res.message)
+  const reviewCert = (c, action) =>
+    act(c.id, () => adminApi.reviewCertificate(c.id, action), (res) => res.message)
+  const resolveEsc = (e, action) =>
+    act(e.id, () => adminApi.resolveEscalation(e.id, action),
+      () => `Escalation marked ${action === 'SOURCED' ? 'sourced' : 'closed'}.`)
 
   if (loading && !overview) {
     return (
@@ -148,12 +164,16 @@ export default function AdminConsole() {
       )}
 
       {/* stat row */}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
         <StatCard label="Active Ripples" value={overview.active_ripples} sub={`${overview.requests_total} total requests`} color="admin" subColor="text-text-faint" />
         <StatCard label="Shadow-muted" value={overview.muted_ripples} sub="look active, not broadcast" color="donor" subColor="text-text-faint" />
         <StatCard label="Slips to Review" value={overview.slips_needs_review} sub="OCR could not confirm" color="warning" subColor="text-text-faint" />
         <StatCard label="Banned / Shadow" value={`${overview.banned} / ${overview.shadow_banned}`} sub={`${overview.donors_total} accounts`} color="primary" subColor="text-text-faint" />
+        <StatCard label="Certificates" value={overview.certificates_pending} sub="awaiting cooldown review" color="warning" subColor="text-text-faint" />
+        <StatCard label="Escalations" value={overview.escalations_open} sub={`${overview.ineligible_donors} donors locked`} color="primary" subColor="text-text-faint" />
       </div>
+
+      {overview.integrations && <IntegrationBar integrations={overview.integrations} />}
 
       <div className="mt-6">
         <Tabs tabs={TABS} active={tab} color="admin" onChange={setTab} />
@@ -163,8 +183,67 @@ export default function AdminConsole() {
         {tab === 0 && <RipplesTab requests={requests} busyId={busyId} onStatus={setReqStatus} onToggle={toggleBroadcast} onDelete={deleteReq} />}
         {tab === 1 && <SlipsTab requests={requests} busyId={busyId} onReview={reviewSlip} />}
         {tab === 2 && <AccountsTab donors={donors} busyId={busyId} onModerate={moderate} />}
+        {tab === 3 && <CertificatesTab certificates={certificates} busyId={busyId} onReview={reviewCert} />}
+        {tab === 4 && <EscalationsTab escalations={escalations} busyId={busyId} onResolve={resolveEsc} />}
       </div>
     </ConsoleShell>
+  )
+}
+
+/* ── which external integrations are actually live ───────────────── */
+const INTEGRATION_LABEL = {
+  sms: 'SMS OTP', fcm: 'FCM push', ocr: 'Slip OCR',
+  maps: 'Maps routing', blood_bank: 'Blood banks', ngo_hotline: 'NGO hotlines',
+}
+
+function IntegrationBar({ integrations }) {
+  // A key that is present but rejected is the dangerous state: it looks
+  // configured while every call silently falls back. Call it out separately
+  // from "not configured".
+  const failing = integrations.maps_key_present && !integrations.maps
+
+  return (
+    <div className="mt-4 rounded-lg border border-line bg-card px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wide text-text-faint">Integrations</span>
+        {Object.entries(INTEGRATION_LABEL).map(([key, label]) => {
+          const broken = key === 'maps' && failing
+          return (
+            <span
+              key={key}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                integrations[key]
+                  ? 'border-success/30 bg-success/10 text-success'
+                  : broken
+                    ? 'border-warning/30 bg-warning/10 text-warning'
+                    : 'border-line bg-[#0d111a] text-text-faint'
+              }`}
+              title={
+                integrations[key]
+                  ? 'Live'
+                  : broken
+                    ? integrations.maps_error
+                    : 'Not configured — results are simulated'
+              }
+            >
+              <span
+                className={`size-1.5 rounded-full ${
+                  integrations[key] ? 'bg-success' : broken ? 'bg-warning' : 'bg-[#374151]'
+                }`}
+              />
+              {label}
+              {broken && ' — key rejected'}
+            </span>
+          )
+        })}
+      </div>
+      {failing && (
+        <p className="mt-2 text-[10px] text-warning">
+          A Maps key is configured but Google refused it, so the ripple is measuring
+          straight-line distance. {integrations.maps_error}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -443,5 +522,141 @@ function ModButton({ icon: Icon, label, cls, onClick, disabled }) {
     >
       <Icon className="size-3.5" /> {label}
     </button>
+  )
+}
+
+/* ── Tab 4: medical certificates (early cooldown release) ────────── */
+function CertificatesTab({ certificates, busyId, onReview }) {
+  const fmt = (iso) => (iso ? new Date(iso).toLocaleDateString() : '—')
+  return (
+    <TableCard
+      title="Medical certificates appealing a cooldown"
+      subtitle="A donor locked out by a mistyped donation date can upload a timestamped certificate. Approving it releases the cooldown early — if the certificate carries a corrected date, that date is written and the engine simply recomputes."
+      head={['Donor', 'Reason', 'Issued', 'Corrected date', 'Status', 'Actions']}
+    >
+      {certificates.length === 0 && (
+        <tr>
+          <td colSpan={6} className="px-5 py-8 text-center text-text-faint">
+            No certificates submitted.
+          </td>
+        </tr>
+      )}
+      {certificates.map((c) => (
+        <tr key={c.id} className="border-b border-line/60 last:border-0">
+          <td className="px-5 py-3">
+            <p className="font-semibold text-white">{c.donor_name ?? '—'}</p>
+            <p className="text-[11px] text-text-faint">
+              submitted {new Date(c.created_at).toLocaleString()}
+            </p>
+          </td>
+          <td className="max-w-[260px] px-5 py-3 text-text-muted">
+            {c.note || <span className="text-text-faint">no note</span>}
+            {c.image && (
+              <a
+                href={c.image}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-2 text-admin underline"
+              >
+                view scan
+              </a>
+            )}
+          </td>
+          <td className="px-5 py-3 text-text-muted">{fmt(c.issued_at)}</td>
+          <td className="px-5 py-3 text-text-muted">{fmt(c.corrected_donation_date)}</td>
+          <td className="px-5 py-3">
+            <Badge color={certColor[c.status] ?? 'warning'}>{c.status}</Badge>
+          </td>
+          <td className="px-5 py-3">
+            {c.status === 'PENDING' ? (
+              <div className="flex flex-wrap gap-1.5">
+                <ModButton
+                  disabled={spin(c.id, busyId)} icon={CheckCircle2} label="Approve"
+                  cls="border-success/30 bg-success/10 text-success hover:bg-success/20"
+                  onClick={() => onReview(c, 'APPROVE')}
+                />
+                <ModButton
+                  disabled={spin(c.id, busyId)} icon={XCircle} label="Reject"
+                  cls="border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+                  onClick={() => onReview(c, 'REJECT')}
+                />
+              </div>
+            ) : (
+              <span className="text-[11px] text-text-faint">
+                {c.reviewed_by} · {fmt(c.reviewed_at)}
+              </span>
+            )}
+          </td>
+        </tr>
+      ))}
+    </TableCard>
+  )
+}
+
+/* ── Tab 5: rare-blood escalations ───────────────────────────────── */
+function EscalationsTab({ escalations, busyId, onResolve }) {
+  return (
+    <TableCard
+      title="Rare-blood requests escalated off-network"
+      subtitle="A city-wide rare-type ping that goes unanswered is handed to national blood-bank APIs and partner NGO hotlines, so a family is never left with a dead end."
+      head={['Type / Hospital', 'Reason', 'Channels', 'Status', 'Actions']}
+    >
+      {escalations.length === 0 && (
+        <tr>
+          <td colSpan={5} className="px-5 py-8 text-center text-text-faint">
+            No escalations recorded.
+          </td>
+        </tr>
+      )}
+      {escalations.map((e) => (
+        <tr key={e.id} className="border-b border-line/60 last:border-0">
+          <td className="px-5 py-3">
+            <p className="font-bold text-primary">{e.blood_type}</p>
+            <p className="text-[11px] text-text-faint">{e.hospital}</p>
+            <p className="text-[10px] text-[#374151]">
+              {new Date(e.created_at).toLocaleString()}
+            </p>
+          </td>
+          <td className="max-w-[240px] px-5 py-3 text-text-muted">{e.reason}</td>
+          <td className="px-5 py-3">
+            <ul className="space-y-1 text-[11px]">
+              {e.channels.map((c, i) => (
+                <li key={`${c.channel}-${i}`}>
+                  <span className="text-text-muted">{c.channel}</span>{' '}
+                  <span
+                    className={
+                      c.delivered ? 'text-success' : c.simulated ? 'text-warning' : 'text-primary'
+                    }
+                  >
+                    {c.delivered ? 'delivered' : c.simulated ? 'not configured' : 'failed'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </td>
+          <td className="px-5 py-3">
+            <Badge color={escColor[e.status] ?? 'warning'}>{e.status}</Badge>
+          </td>
+          <td className="px-5 py-3">
+            {e.status === 'OPEN' ? (
+              <div className="flex flex-wrap gap-1.5">
+                <ModButton
+                  disabled={spin(e.id, busyId)} icon={CheckCircle2} label="Sourced"
+                  cls="border-success/30 bg-success/10 text-success hover:bg-success/20"
+                  onClick={() => onResolve(e, 'SOURCED')}
+                />
+                <ModButton
+                  disabled={spin(e.id, busyId)} icon={XCircle} label="Close"
+                  cls="border-line bg-[#0d111a] text-text-muted hover:text-white"
+                  onClick={() => onResolve(e, 'CLOSE')}
+                />
+              </div>
+            ) : (
+              <span className="text-[11px] text-text-faint">{e.resolved_by}</span>
+            )}
+          </td>
+        </tr>
+      ))}
+    </TableCard>
   )
 }

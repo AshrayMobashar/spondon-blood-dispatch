@@ -161,16 +161,43 @@ async def update_sleep_mode(donor_id: str, body: SleepModeUpdate):
 
 **Body**
 ```json
-{ "segments": ["Mirpur-Rd", "Kazipara", "Shewrapara"], "label": "Home to Office" }
+{ "segments": ["Mirpur-Rd", "Kazipara", "Shewrapara"], "label": "Home to Office", "enabled": true }
 ```
 
 ```python
 @router.put("/donors/{donor_id}/commute-route")
 async def save_route(donor_id: str, body: RouteUpdate):
     donor = await _get_donor(donor_id)
-    donor.commute_route = CommuteRoute(segments=body.segments, label=body.label)
+    donor.commute_route = CommuteRoute(
+        segments=body.segments, label=body.label, enabled=body.enabled
+    )
     await donor.save()
     return {"donor_id": str(donor.id), "message": "Commute route saved",
+            "commute_route": donor.commute_route.model_dump(mode="json")}
+```
+
+---
+
+## 1.6b Pause / resume route matching
+
+Turning commute matching off must not discard the route — a donor who pauses it
+resumes without retyping their commute. Use 1.7 to actually delete it.
+
+| | |
+|---|---|
+| **URL** | `POST http://localhost:1184/api/donors/{donor_id}/commute-route/toggle?enabled=false` |
+| **Params** | Query: `enabled` (bool). Path: `donor_id` |
+
+```python
+@router.post("/donors/{donor_id}/commute-route/toggle")
+async def toggle_route(donor_id: str, enabled: bool = True):
+    donor = await _get_donor(donor_id)
+    if donor.commute_route is None:
+        raise HTTPException(status_code=400, detail="No commute route saved yet …")
+    donor.commute_route.enabled = enabled
+    await donor.save()
+    return {"donor_id": str(donor.id),
+            "message": f"Route-aware matching {'resumed' if enabled else 'paused'}",
             "commute_route": donor.commute_route.model_dump(mode="json")}
 ```
 
@@ -589,6 +616,7 @@ async def resolve_appeal(appeal_id: str, body: AppealResolve):
 | 1.4 | GET | `/api/donors/{id}/sleep-mode` |
 | 1.5 | PUT | `/api/donors/{id}/sleep-mode` |
 | 1.6 | PUT | `/api/donors/{id}/commute-route` |
+| 1.6b | POST | `/api/donors/{id}/commute-route/toggle?enabled=` |
 | 1.7 | DELETE | `/api/donors/{id}/commute-route` |
 | 1.8 | PUT | `/api/donors/{id}/location` |
 | 1.9 | POST | `/api/dispatch/evaluate` |

@@ -1,0 +1,48 @@
+# Spondon — API + MongoDB.
+#
+#   docker compose up --build
+#   docker compose exec api python seed_admin.py   # demo admin, donors, requests
+#
+# API:  http://localhost:1184  (docs at /docs)
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"          # drop this line if you don't need a local shell/Compass
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "1184:1184"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+      DB_NAME: spondon
+      PORT: "1184"
+      APP_TIMEZONE: Asia/Dhaka
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      # Override in a real deployment — this default is not a secret.
+      JWT_SECRET: change-me-to-a-long-random-secret-at-least-32-bytes
+      # Module 1, Feature 3 — rare-blood city-wide override. Shorten the
+      # escalation window for a live demo so the blood-bank / NGO hand-off
+      # is watchable inside a few seconds.
+      RARE_ESCALATION_SECONDS: "180"
+      ESCALATION_SWEEP_SECONDS: "20"
+      RARE_SMS_ALERTS: "true"
+    # Anything else (SMS/FCM/OpenAI/Maps/blood-bank keys) can go in
+    # backend/.env — uncomment to load it instead of hard-coding keys here.
+    # env_file: ./backend/.env
+
+volumes:
+  mongo-data:

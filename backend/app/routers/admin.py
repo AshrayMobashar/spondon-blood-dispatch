@@ -14,10 +14,22 @@ ban also retro-mutes the account's currently-open requests.
 """
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..models import Donor, BloodRequest, Appeal, Admin, ACTIVE, BANNED, SHADOW_BANNED
-from ..schemas import AdminLogin, SlipReview, RequestPatch, DonorModerate, DonorPatch
+from .. import integrations
+from ..eligibility import recalculate
+from ..models import (
+    Account, BloodRequest, Appeal, Admin, Escalation, MedicalCertificate,
+    ACTIVE, BANNED, SHADOW_BANNED,
+)
+from ..schemas import (
+    AdminLogin, SlipReview, RequestPatch, DonorModerate, DonorPatch,
+    CertificateReview, EscalationResolve,
+)
 from ..security import verify_password, create_access_token, get_current_admin
 from ..services import to_oid, serialize, utcnow
+
+# Kept as an alias so the rest of this module reads the way admins think about
+# it — accounts under moderation.
+Donor = Account
 
 router = APIRouter(prefix="/admin", tags=["Admin — Role & Access Management"])
 
@@ -48,6 +60,11 @@ async def overview(admin: Admin = Depends(get_current_admin)):
     donors = await Donor.find_all().to_list()
     pending_appeals = await Appeal.find(Appeal.status == "PENDING").count()
 
+    pending_certs = await MedicalCertificate.find(
+        MedicalCertificate.status == "PENDING"
+    ).count()
+    open_escalations = await Escalation.find(Escalation.status == "OPEN").count()
+
     active_ripples = [r for r in requests if r.status in ("OPEN", "LOCKED")]
     return {
         "requests_total": len(requests),
@@ -57,7 +74,13 @@ async def overview(admin: Admin = Depends(get_current_admin)):
         "donors_total": len(donors),
         "banned": len([d for d in donors if d.status == BANNED]),
         "shadow_banned": len([d for d in donors if d.status == SHADOW_BANNED]),
+        "ineligible_donors": len([d for d in donors if d.is_donor and not d.eligibility.eligible]),
         "appeals_pending": pending_appeals,
+        "certificates_pending": pending_certs,
+        "escalations_open": open_escalations,
+        # So the console can say plainly which integrations are live and which
+        # are standing in.
+        "integrations": integrations.integration_status(),
     }
 
 
@@ -133,6 +156,97 @@ async def patch_donor(donor_id: str, body: DonorPatch, admin: Admin = Depends(ge
         setattr(donor, field, value)
     await donor.save()
     return serialize(donor)
+
+
+# ── Medical certificates (early cooldown release) ────────────────────
+@router.get("/certificates", summary="Certificates awaiting review")
+async def list_certificates(status: str | None = None, admin: Admin = Depends(get_current_admin)):
+    query = (
+        MedicalCertificate.find(MedicalCertificate.status == status.upper())
+        if status else MedicalCertificate.find_all()
+    )
+    certs = await query.sort(-MedicalCertificate.created_at).to_list()
+    return [serialize(c) for c in certs]
+
+
+@router.post("/certificates/{certificate_id}/review", summary="Approve or reject a certificate")
+async def review_certificate(
+    certificate_id: str, body: CertificateReview, admin: Admin = Depends(get_current_admin)
+):
+    """Approving waives the cooldown early.
+
+    This is the fix for a donor locked out for months by a mistyped donation
+    date. If the certificate carries the corrected date we write that and let
+    the engine recompute normally — which may clear the lock outright. Otherwise
+    we waive the current cooldown, which is narrower than editing history: a
+    later donation starts a fresh lock regardless.
+    """
+    action = body.action.upper()
+    if action not in ("APPROVE", "REJECT"):
+        raise HTTPException(status_code=400, detail="action must be APPROVE or REJECT")
+
+    cert = await MedicalCertificate.get(to_oid(certificate_id))
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    if cert.status != "PENDING":
+        raise HTTPException(status_code=400, detail=f"Certificate already {cert.status}")
+
+    now = utcnow()
+    cert.status = "APPROVED" if action == "APPROVE" else "REJECTED"
+    cert.reviewed_by = admin.email
+    cert.reviewed_at = now
+    cert.review_note = body.note
+    await cert.save()
+
+    donor = await Donor.get(to_oid(cert.donor_id))
+    if donor is None:
+        return {"certificate_id": str(cert.id), "status": cert.status,
+                "message": "Certificate resolved, but the account no longer exists."}
+
+    if action == "APPROVE":
+        if cert.corrected_donation_date is not None:
+            donor.health.last_donation_date = cert.corrected_donation_date
+        else:
+            donor.eligibility.cooldown_waived_at = now
+            donor.eligibility.cooldown_waived_by = admin.email
+        recalculate(donor, now=now)
+        await donor.save()
+
+    return {
+        "certificate_id": str(cert.id),
+        "status": cert.status,
+        "donor_id": str(donor.id),
+        "eligible": donor.eligibility.eligible,
+        "reasons": donor.eligibility.reasons,
+        "message": (
+            "Certificate approved — cooldown released early."
+            if action == "APPROVE" else "Certificate rejected — cooldown stands."
+        ),
+    }
+
+
+# ── Rare-blood escalations ───────────────────────────────────────────
+@router.get("/escalations", summary="Requests handed to blood banks / NGO hotlines")
+async def list_escalations(admin: Admin = Depends(get_current_admin)):
+    escs = await Escalation.find_all().sort(-Escalation.created_at).to_list()
+    return [serialize(e) for e in escs]
+
+
+@router.post("/escalations/{escalation_id}/resolve", summary="Close out an escalation")
+async def resolve_escalation(
+    escalation_id: str, body: EscalationResolve, admin: Admin = Depends(get_current_admin)
+):
+    action = body.action.upper()
+    if action not in ("SOURCED", "CLOSE"):
+        raise HTTPException(status_code=400, detail="action must be SOURCED or CLOSE")
+    esc = await Escalation.get(to_oid(escalation_id))
+    if not esc:
+        raise HTTPException(status_code=404, detail="Escalation not found")
+    esc.status = "SOURCED" if action == "SOURCED" else "CLOSED"
+    esc.resolved_by = admin.email
+    esc.resolved_at = utcnow()
+    await esc.save()
+    return serialize(esc)
 
 
 @router.post("/donors/{donor_id}/moderate", summary="Ban, shadow-ban, or reinstate an account")

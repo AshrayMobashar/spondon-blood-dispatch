@@ -1,10 +1,12 @@
-"""Shared helpers: id parsing, serialization, and the dispatch decision engine."""
-from datetime import datetime, timezone
+"""Shared helpers: id parsing, serialization, and the per-donor ping decision."""
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from beanie import PydanticObjectId
 from fastapi import HTTPException
 
-from .models import Donor, BloodRequest
+from . import config
+from .models import Account, BloodRequest
 
 
 def to_oid(value: str) -> PydanticObjectId:
@@ -20,6 +22,25 @@ def serialize(doc) -> dict:
     if doc is None:
         return None
     return doc.model_dump(mode="json")
+
+
+# ── Local wall-clock time ────────────────────────────────────────────
+def local_now(now: Optional[datetime] = None) -> datetime:
+    """`now` in the deployment's local zone (Asia/Dhaka by default)."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(config.TZ)
+
+
+def local_hhmm(now: Optional[datetime] = None) -> str:
+    """Wall-clock HH:MM a donor would read off their own phone.
+
+    Sleep Mode windows are set in local time. Evaluating "23:00–07:00" against
+    UTC on a UTC+6 deployment silences pings from 05:00 to 13:00 local — the
+    middle of the working day — while letting them through at 2 a.m.
+    """
+    return local_now(now).strftime("%H:%M")
 
 
 # ── Sleep-window maths ───────────────────────────────────────────────
@@ -41,11 +62,65 @@ def in_sleep_window(now_hhmm: str, start: str, end: str) -> bool:
 LIFE_THREATENING = "LIFE_THREATENING"
 
 
-def decide_ping(donor: Donor, req: BloodRequest, now_hhmm: str) -> dict:
-    """Core Smart-Ping rule engine for a single donor + request.
+def gps_is_fresh(donor: Account, now: Optional[datetime] = None) -> bool:
+    """Is the donor's last position recent enough to mean "they are there now"?
+
+    Without this an eight-hour-old fix would still read as "on the segment",
+    which is exactly the stale-location case a route ping must not fire on.
+    """
+    loc = donor.current_location
+    if loc is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    stamped = loc.updated_at
+    if stamped is None:
+        return False
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    return now - stamped <= timedelta(minutes=config.LOCATION_STALE_AFTER_MINUTES)
+
+
+def route_is_saved_for(donor: Account, req: BloodRequest) -> bool:
+    """Does the request sit on a segment of this donor's (active) saved route?"""
+    route = donor.commute_route
+    return bool(
+        route
+        and route.enabled
+        and req.road_segment
+        and req.road_segment in route.segments
+    )
+
+
+def on_route_now(
+    donor: Account, req: BloodRequest, *, now: Optional[datetime] = None
+) -> bool:
+    """Is the donor physically on the request's segment at this moment?
+
+    This is the condition the spec attaches the proactive commute ping to —
+    "only while the donor is actually on the matching road, never for a location
+    they have already left" — so it needs both a saved segment and a live fix.
+    """
+    if not route_is_saved_for(donor, req):
+        return False
+    if not gps_is_fresh(donor, now):
+        return False
+    return donor.current_location.road_segment == req.road_segment
+
+
+def decide_ping(
+    donor: Account, req: BloodRequest, now_hhmm: str, *, now: Optional[datetime] = None
+) -> dict:
+    """Smart-Ping rule engine for a single donor + request.
 
     Returns a decision dict: decision, reason, pinged, fcm_priority, fcm_bypass_dnd.
-    Assumes the donor's blood type already matches the request.
+    Assumes the caller has already established that this donor is dispatchable
+    and within reach (see app.dispatch).
+
+    The commute route is an *upgrade*, never a filter: a donor sitting on the
+    request's road segment is promoted to a high-priority proactive ping, and a
+    donor who has driven past it simply falls through to the standard ping they
+    would have received had they saved no route at all. Treating a route as a
+    filter would make saving one strictly worse than not saving one.
     """
     sm = donor.sleep_mode
     emergency = req.severity == LIFE_THREATENING
@@ -78,32 +153,38 @@ def decide_ping(donor: Donor, req: BloodRequest, now_hhmm: str) -> dict:
             "fcm_bypass_dnd": False,
         }
 
-    # 2) Commute-aware matching (donor is awake)
-    if donor.commute_route and req.road_segment and req.road_segment in donor.commute_route.segments:
-        on_segment_now = (
-            donor.current_location is not None
-            and donor.current_location.road_segment == req.road_segment
-        )
-        if on_segment_now:
+    # 2) Commute-aware matching (donor is awake) — an upgrade, not a gate.
+    on_saved_route = route_is_saved_for(donor, req)
+    if on_saved_route:
+        fresh = gps_is_fresh(donor, now)
+        if on_route_now(donor, req, now=now):
             return {
                 "decision": "ROUTE_MATCH",
-                "reason": f"Request sits on '{req.road_segment}', a segment on the donor's saved route and their live GPS is on it now.",
+                "reason": (
+                    f"Request sits on '{req.road_segment}', a segment on the donor's saved "
+                    "route, and their live GPS is on it right now — zero extra travel."
+                ),
                 "pinged": True,
-                "fcm_priority": "high" if emergency else "normal",
+                "fcm_priority": "high",
                 "fcm_bypass_dnd": False,
             }
-        return {
-            "decision": "SKIPPED_OFF_ROUTE",
-            "reason": f"'{req.road_segment}' is on the saved route but the donor's live GPS has already left that segment — no route ping.",
-            "pinged": False,
-            "fcm_priority": "normal",
-            "fcm_bypass_dnd": False,
-        }
+        # On the saved route but not on it at this moment (or the fix is stale):
+        # no proactive route ping — fall through to the standard ping below.
+        note = (
+            f" The donor's last GPS fix is older than "
+            f"{config.LOCATION_STALE_AFTER_MINUTES} min, so 'on the segment now' cannot be "
+            "assumed."
+            if not fresh else
+            f" Their live GPS has already left '{req.road_segment}'."
+        )
+    else:
+        note = ""
 
     # 3) Standard proximity ping
     return {
         "decision": "PINGED",
-        "reason": "Standard ping — donor is awake and blood type matches.",
+        "reason": "Standard ping — donor is awake, eligible, in range and blood type matches."
+                  + note,
         "pinged": True,
         "fcm_priority": "high" if emergency else "normal",
         "fcm_bypass_dnd": False,

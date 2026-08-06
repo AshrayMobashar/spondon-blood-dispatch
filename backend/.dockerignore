@@ -1,0 +1,13 @@
+# Keep the build context small and secrets out of the image.
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+postman/
+.postman/
