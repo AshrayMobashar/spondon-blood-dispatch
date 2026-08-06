@@ -126,6 +126,19 @@ def decide_ping(
     emergency = req.severity == LIFE_THREATENING
     sleeping = sm.enabled and in_sleep_window(now_hhmm, sm.start, sm.end)
 
+    # 0) Eligibility gate (Feature 3).
+    # A donor whose eligibility flag is locked (cooldown or low weight) is
+    # excluded from EVERY ping — geo-ripple and rare-blood alike — no matter
+    # how urgent the request is. This runs before all other checks.
+    if not donor.eligibility.eligible:
+        return {
+            "decision": "SKIPPED_INELIGIBLE",
+            "reason": "Donor's eligibility flag is locked (cooldown or weight) — excluded from all pings.",
+            "pinged": False,
+            "fcm_priority": "normal",
+            "fcm_bypass_dnd": False,
+        }
+
     # 1) Sleep Mode gate
     if sleeping:
         if emergency and sm.allow_extreme_emergencies:
