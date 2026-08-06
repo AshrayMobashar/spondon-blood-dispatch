@@ -14,9 +14,10 @@ from datetime import timedelta
 
 from app.db import init_db
 from app.models import (
-    Donor, BloodRequest, Admin, Reliability,
-    ACTIVE, BANNED, SHADOW_BANNED, utcnow,
+    Donor, BloodRequest, Admin, Reliability, Eligibility, EligibilityCertificate,
+    ACTIVE, BANNED, SHADOW_BANNED, WHOLE_BLOOD, PLATELET, utcnow,
 )
+from app import eligibility as engine
 from app.security import hash_password
 
 ADMIN_EMAIL = "admin@spondon.com"
@@ -40,6 +41,7 @@ async def seed():
     # ── Fresh donor + request sets (clear previous seed) ────────────
     await Donor.find_all().delete()
     await BloodRequest.find_all().delete()
+    await EligibilityCertificate.find_all().delete()
 
     donors_spec = [
         # name, blood, phone, status, reason, flagged
@@ -50,7 +52,28 @@ async def seed():
         ("Shovon Ahmed",  "AB-","01711000005", SHADOW_BANNED, "Submitted 3 fake requests", 3),
     ]
     donors = {}
+    # Feature 3 demo states, keyed by donor name:
+    #   (weight_kg, days_since_donation or None, donation_type)
+    elig_spec = {
+        "Rafiul Islam": (68.0, 130, WHOLE_BLOOD),   # cooldown elapsed  → eligible
+        "Nadia Akter":  (70.0, 40, WHOLE_BLOOD),    # 120-day lock      → locked (~80 left)
+        "Karim Uddin":  (72.0, 5, PLATELET),        # 14-day lock       → locked (~9 left)
+        "Tanvir Hasan": (48.0, 200, WHOLE_BLOOD),   # underweight       → weight-locked
+        "Shovon Ahmed": (66.0, None, WHOLE_BLOOD),  # never donated     → eligible
+    }
+
     for name, blood, phone, status, reason, flagged in donors_spec:
+        weight, days_ago, dtype = elig_spec[name]
+        last_donation = (now - timedelta(days=days_ago)) if days_ago is not None else None
+        # Build the eligibility sub-document, then compute the flag from it.
+        elig = Eligibility(weight_kg=weight, last_donation_date=last_donation, donation_type=dtype)
+        result = engine.recalculate(weight, last_donation, dtype, now=now)
+        elig.eligible = result["eligible"]
+        elig.cooldown_locked = result["cooldown_locked"]
+        elig.weight_locked = result["weight_locked"]
+        elig.next_eligible_date = last_donation + timedelta(days=engine.lock_days_for(dtype)) if last_donation else None
+        elig.last_recalculated = now
+
         d = Donor(
             name=name, blood_type=blood, phone=phone,
             status=status,
@@ -59,6 +82,7 @@ async def seed():
             status_at=now if status != ACTIVE else None,
             flagged_fake_requests=flagged,
             reliability=Reliability(),
+            eligibility=elig,
         )
         await d.insert()
         donors[name] = d
@@ -88,10 +112,25 @@ async def seed():
         )
         await r.insert()
 
+    # ── Feature 3: a pending medical certificate for the admin review queue ──
+    # Karim Uddin is mid-cooldown (platelet, ~9 days left). He claims his
+    # donation date was mistyped and uploads a certificate to unlock early.
+    karim = donors["Karim Uddin"]
+    cert = EligibilityCertificate(
+        donor_id=str(karim.id),
+        donor_name=karim.name,
+        file_url="https://files.spondon.app/cert/karim-demo.pdf",
+        note="My platelet donation was 2 weeks earlier than recorded — please review.",
+        claimed_donation_date=now - timedelta(days=20),
+    )
+    await cert.insert()
+
     print("Seed complete.")
-    print(f"  Admin login : {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
-    print(f"  Donors      : {len(donors_spec)}  (1 banned, 1 shadow-banned)")
-    print(f"  Requests    : {len(requests_spec)}  (1 needs-review slip, 1 shadow-muted)")
+    print(f"  Admin login  : {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
+    print(f"  Donors       : {len(donors_spec)}  (1 banned, 1 shadow-banned)")
+    print(f"  Requests     : {len(requests_spec)}  (1 needs-review slip, 1 shadow-muted)")
+    print(f"  Eligibility  : 2 eligible, 2 cooldown-locked, 1 weight-locked")
+    print(f"  Certificates : 1 pending admin review (Karim Uddin)")
 
 
 if __name__ == "__main__":

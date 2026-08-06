@@ -44,6 +44,32 @@ class Reliability(BaseModel):
     removed_at: Optional[datetime] = None
 
 
+# Feature 3 — Eligibility Cooldown & Auto-Pause Engine.
+# The single live eligibility flag plus the facts it is recalculated from.
+# Donation types recognised by the engine:
+WHOLE_BLOOD = "WHOLE_BLOOD"          # locks the flag for 120 days
+PLATELET = "PLATELET"                # apheresis — locks the flag for only 14 days
+
+
+class Eligibility(BaseModel):
+    # The single live flag. True = donor can receive pings.
+    eligible: bool = True
+    # The two independent locks that can pull the flag down.
+    cooldown_locked: bool = False        # time-based (last donation + lock window)
+    weight_locked: bool = False          # weight below the 50 kg medical minimum
+    # Facts the engine reads on every recalculation.
+    weight_kg: Optional[float] = None    # most recent VALID stored weight
+    last_donation_date: Optional[datetime] = None
+    donation_type: str = WHOLE_BLOOD     # type of that last donation
+    # Derived values, refreshed each recalculation (handy for the UI).
+    next_eligible_date: Optional[datetime] = None
+    last_recalculated: Optional[datetime] = None
+    # Admin early-unlock audit (set when a medical certificate is approved).
+    admin_unlocked: bool = False
+    admin_unlocked_by: Optional[str] = None
+    admin_unlocked_at: Optional[datetime] = None
+
+
 # Account moderation states set by an admin (see admin router).
 ACTIVE = "ACTIVE"
 BANNED = "BANNED"              # account blocked outright — cannot use the system
@@ -60,6 +86,8 @@ class Donor(Document):
     commute_route: Optional[CommuteRoute] = None
     current_location: Optional[GeoPoint] = None
     reliability: Reliability = Field(default_factory=Reliability)
+    # ── Feature 3 — Eligibility Cooldown & Auto-Pause Engine ──
+    eligibility: Eligibility = Field(default_factory=Eligibility)
     # ── Account moderation (admin-controlled) ──
     status: str = ACTIVE                  # ACTIVE | BANNED | SHADOW_BANNED
     status_reason: Optional[str] = None
@@ -135,3 +163,24 @@ class Appeal(Document):
 
     class Settings:
         name = "appeals"
+
+
+# Feature 3 corner case — a donor locked out too long because of a mistyped
+# donation date uploads a timestamped medical certificate. An admin reviews it
+# and, if genuine, unlocks the cooldown early.
+class EligibilityCertificate(Document):
+    donor_id: str
+    donor_name: Optional[str] = None
+    # A reference to the uploaded file (URL / storage key). The engine only
+    # needs the pointer plus the timestamp — it does not read the file itself.
+    file_url: str
+    note: Optional[str] = None                 # donor's explanation
+    claimed_donation_date: Optional[datetime] = None   # the corrected date, if given
+    uploaded_at: datetime = Field(default_factory=utcnow)
+    status: str = "PENDING"                    # PENDING | APPROVED | REJECTED
+    reviewed_by: Optional[str] = None          # admin email
+    reviewed_at: Optional[datetime] = None
+    review_note: Optional[str] = None
+
+    class Settings:
+        name = "eligibility_certificates"

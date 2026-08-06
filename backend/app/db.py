@@ -5,7 +5,7 @@ from beanie import init_beanie
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from .models import Donor, BloodRequest, PingLog, Appeal, Admin
+from .models import Donor, BloodRequest, PingLog, Appeal, Admin, EligibilityCertificate
 
 load_dotenv()
 
@@ -23,7 +23,7 @@ async def init_db() -> None:
     await client.admin.command("ping")
     await init_beanie(
         database=client[DB_NAME],
-        document_models=[Donor, BloodRequest, PingLog, Appeal, Admin],
+        document_models=[Donor, BloodRequest, PingLog, Appeal, Admin, EligibilityCertificate],
     )
 
 
