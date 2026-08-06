@@ -97,3 +97,40 @@ class DonorPatch(BaseModel):
     name: Optional[str] = None
     blood_type: Optional[str] = None
     phone: Optional[str] = None
+
+
+# ── Feature 3 — Eligibility Cooldown & Auto-Pause Engine ─────────────
+class WeightUpdate(BaseModel):
+    weight_kg: float = Field(..., examples=[68.0], description="Most recent weight in kg")
+
+
+class DonationRecord(BaseModel):
+    donation_type: str = Field(
+        "WHOLE_BLOOD",
+        description="WHOLE_BLOOD (120-day lock) | PLATELET (14-day lock)",
+        examples=["WHOLE_BLOOD"],
+    )
+    donation_date: Optional[str] = Field(
+        None,
+        description="ISO date of the donation; defaults to now if omitted",
+        examples=["2025-01-15T00:00:00Z"],
+    )
+
+
+class CertificateUpload(BaseModel):
+    file_url: str = Field(..., examples=["https://files.spondon.app/cert/abc123.pdf"])
+    note: Optional[str] = Field(None, examples=["I mistyped my donation date as 2025 instead of 2024."])
+    claimed_donation_date: Optional[str] = Field(
+        None, description="The corrected donation date, if the donor knows it",
+        examples=["2024-01-15T00:00:00Z"],
+    )
+
+
+class CertificateReview(BaseModel):
+    action: str = Field(..., description="APPROVE | REJECT")
+    corrected_donation_date: Optional[str] = Field(
+        None,
+        description="On APPROVE, optionally fix the donation date the cooldown recomputes from",
+        examples=["2024-01-15T00:00:00Z"],
+    )
+    note: Optional[str] = Field(None, examples=["Certificate legible; hospital stamp valid."])

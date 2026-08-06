@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import init_db
-from .routers import smart_ping, concurrency, admin
+from .routers import smart_ping, concurrency, admin, eligibility_router
 
 load_dotenv()
 PORT = int(os.getenv("PORT", "1184"))
@@ -40,6 +40,7 @@ app.add_middleware(
 
 app.include_router(smart_ping.router, prefix="/api", tags=["Feature 1 — Smart Ping"])
 app.include_router(concurrency.router, prefix="/api", tags=["Feature 2 — Concurrency & Accountability"])
+app.include_router(eligibility_router.router, prefix="/api", tags=["Feature 3 — Eligibility Cooldown & Auto-Pause"])
 app.include_router(admin.router, prefix="/api", tags=["Admin — Role & Access Management"])
 
 

@@ -1,0 +1,30 @@
+services:
+  # ---------- MongoDB box ----------
+  mongo:
+    image: mongo:7
+    container_name: spondon-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db   # data ta container remove korle o thake, harai jabe na
+
+  # ---------- Backend (FastAPI) box ----------
+  backend:
+    build:
+      context: ./backend        # backend/Dockerfile use kore build hobe
+    container_name: spondon-backend
+    restart: unless-stopped
+    ports:
+      - "1184:1184"              # host:1184  ->  container:1184
+    environment:
+      PORT: 1184
+      MONGODB_URI: mongodb://mongo:27017   # "mongo" = service naam, docker network e ei naam diyei mongo box ke khuje pabe
+      DB_NAME: spondon
+      JWT_SECRET: change-me-to-a-long-random-secret-at-least-32-bytes
+      ADMIN_TOKEN_TTL_HOURS: 12
+    depends_on:
+      - mongo                    # backend start hobe mongo start howar por
+
+volumes:
+  mongo_data:

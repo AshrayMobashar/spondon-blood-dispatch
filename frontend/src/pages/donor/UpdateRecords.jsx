@@ -4,6 +4,9 @@ import { ClipboardEdit, Moon, Navigation, BellOff, CheckCircle2, Sparkles } from
 import Shell from '../../components/Shell.jsx'
 import { DonorChips } from '../../components/RoleChips.jsx'
 import { Card, Tabs, Toggle, Button, Field, Input, Select } from '../../components/ui.jsx'
+import { eligibilityApi, ApiError } from '../../lib/api.js'
+
+const DONOR_KEY = 'spondon_demo_donor_id'
 
 const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
 const tabs = ['Update Records', 'Weight Validation', 'Ping Activity']
@@ -35,6 +38,9 @@ function SidebarToggle({ icon: Icon, title, sub, color, defaultOn }) {
 export default function UpdateRecords() {
   const [tab, setTab] = useState(0)
   const [saved, setSaved] = useState(false)
+  const [message, setMessage] = useState('')      // result text from the backend
+  const [ok, setOk] = useState(true)              // was the save accepted?
+  const [donorId] = useState(() => localStorage.getItem(DONOR_KEY) || '')
   const [form, setForm] = useState({
     weight: '68',
     blood: 'O+',
@@ -46,6 +52,42 @@ export default function UpdateRecords() {
   const set = (k) => (e) => {
     setForm({ ...form, [k]: e.target.value })
     setSaved(false)
+  }
+
+  // Save weight + donation to the backend, which recalculates eligibility.
+  // The weight call may be rejected (implausible value) — we surface that.
+  async function handleSave(e) {
+    e.preventDefault()
+    setMessage('')
+    if (!donorId) {
+      setOk(false)
+      setMessage('Open the Cooldown Dashboard first and load a donor ID.')
+      return
+    }
+    try {
+      // 1) Weight — backend rejects typos and keeps the last valid value.
+      const w = await eligibilityApi.updateWeight(donorId, parseFloat(form.weight))
+      if (w.accepted === false) {
+        setOk(false)
+        setSaved(false)
+        setMessage(w.reason)      // e.g. "5 kg looks too low… Did you mean 50 kg?"
+        return
+      }
+      // 2) Donation type + date — starts/refreshes the cooldown lock.
+      const type = form.type === 'Platelets (Apheresis)' ? 'PLATELET' : 'WHOLE_BLOOD'
+      const iso = form.lastDonation ? new Date(form.lastDonation).toISOString() : null
+      const d = await eligibilityApi.recordDonation(donorId, type, iso)
+      setOk(true)
+      setSaved(true)
+      setMessage(
+        d.eligible
+          ? 'Records saved — donor is eligible.'
+          : `Records saved — cooldown active, ${d.days_remaining} day(s) remaining.`,
+      )
+    } catch (err) {
+      setOk(false)
+      setMessage(err instanceof ApiError ? err.message : 'Save failed.')
+    }
   }
 
   return (
@@ -110,13 +152,7 @@ export default function UpdateRecords() {
             </div>
 
             <Card className="mt-6 max-w-2xl p-6">
-              <form
-                className="space-y-4"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  setSaved(true)
-                }}
-              >
+              <form className="space-y-4" onSubmit={handleSave}>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <Field label="Weight (kg)" hint="Recalculates eligibility on save">
                     <Input value={form.weight} onChange={set('weight')} inputMode="decimal" />
@@ -151,12 +187,17 @@ export default function UpdateRecords() {
 
                 <div className="flex items-center gap-3">
                   <Button type="submit">Save Records</Button>
-                  {saved && (
+                  {saved && ok && (
                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-success">
                       <CheckCircle2 className="size-4" /> Records updated &amp; eligibility recalculated
                     </span>
                   )}
                 </div>
+                {message && (
+                  <p className={`text-xs font-medium ${ok ? 'text-success' : 'text-primary'}`}>
+                    {message}
+                  </p>
+                )}
               </form>
             </Card>
           </div>

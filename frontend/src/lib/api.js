@@ -65,6 +65,42 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
   return data
 }
 
+// Feature 3 — Eligibility Cooldown & Auto-Pause Engine.
+// Donor methods are public (auth: false); admin methods reuse the JWT.
+export const eligibilityApi = {
+  // Recalculate the flag (call on login / when the dashboard opens).
+  loginRecalc: (donorId) =>
+    request(`/donors/${donorId}/eligibility/login-recalc`, { method: 'POST', auth: false }),
+  // Read current status + live countdown.
+  get: (donorId) =>
+    request(`/donors/${donorId}/eligibility`, { auth: false }),
+  // Save a new weight — returns { accepted:false, reason } on a rejected typo.
+  updateWeight: (donorId, weightKg) =>
+    request(`/donors/${donorId}/eligibility/weight`, {
+      method: 'PUT', body: { weight_kg: weightKg }, auth: false,
+    }),
+  // Record a donation to start the cooldown (WHOLE_BLOOD or PLATELET).
+  recordDonation: (donorId, donationType, donationDate) =>
+    request(`/donors/${donorId}/eligibility/donation`, {
+      method: 'POST', body: { donation_type: donationType, donation_date: donationDate }, auth: false,
+    }),
+  // Upload a medical certificate for admin review (early-unlock request).
+  uploadCertificate: (donorId, fileUrl, note, claimedDonationDate) =>
+    request(`/donors/${donorId}/eligibility/certificate`, {
+      method: 'POST',
+      body: { file_url: fileUrl, note, claimed_donation_date: claimedDonationDate },
+      auth: false,
+    }),
+  // Admin: the review queue and the approve/reject decision (JWT required).
+  listCertificates: (status) =>
+    request(`/admin/eligibility/certificates${status ? `?status=${status}` : ''}`),
+  reviewCertificate: (certId, action, correctedDonationDate, note) =>
+    request(`/admin/eligibility/certificates/${certId}/review`, {
+      method: 'POST',
+      body: { action, corrected_donation_date: correctedDonationDate, note },
+    }),
+}
+
 export const adminApi = {
   login: (email, password) =>
     request('/admin/login', { method: 'POST', body: { email, password }, auth: false }),
