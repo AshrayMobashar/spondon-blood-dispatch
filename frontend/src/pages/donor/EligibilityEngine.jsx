@@ -1,88 +1,90 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ShieldCheck, FileUp, UserCog, CheckCircle2, Droplet, AlertTriangle, Loader2 } from 'lucide-react'
+import {
+  ShieldCheck, FileUp, UserCog, CheckCircle2, Droplet, Loader2, TriangleAlert,
+} from 'lucide-react'
 import Shell from '../../components/Shell.jsx'
 import { DonorChips } from '../../components/RoleChips.jsx'
-import { Card, StatCard, Tabs, Button, Input } from '../../components/ui.jsx'
-import { useState, useEffect } from 'react'
-import { eligibilityApi, ApiError } from '../../lib/api.js'
+import { Card, StatCard, Tabs, Button, Field, Input, Badge } from '../../components/ui.jsx'
+import { donorApi } from '../../lib/api.js'
+import { fileToDataUrl, useSession } from '../../lib/session.js'
 
 const tabs = ['Cooldown Dashboard', 'Update Records', 'Weight Validation', 'Ping Activity Log']
 const tabRoutes = ['/donor/eligibility', '/donor/records', '/donor/weight', '/admin/pings']
 
-// This demo has no donor login session, so we let the user paste a donor id
-// (from POST /api/donors) and remember it. Real app: read it from the session.
-const DONOR_KEY = 'spondon_demo_donor_id'
+const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString() : '—')
 
 export default function EligibilityEngine() {
   const [tab, setTab] = useState(0)
   const navigate = useNavigate()
+  const { account, loading: sessionLoading } = useSession({ role: 'donor' })
 
-  const [donorId, setDonorId] = useState(() => localStorage.getItem(DONOR_KEY) || '')
-  const [data, setData] = useState(null)      // the eligibility payload from the API
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [certMsg, setCertMsg] = useState('')
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+  const [remaining, setRemaining] = useState(0)
 
-  // Recalculate on load (this is the "recalculated on every login" behaviour).
-  async function load(id) {
-    if (!id) return
-    setLoading(true)
-    setError('')
+  const load = useCallback(async () => {
+    if (!account) return
     try {
-      // login-recalc first (recompute), then read the fresh status.
-      await eligibilityApi.loginRecalc(id)
-      const status = await eligibilityApi.get(id)
-      setData(status)
-      localStorage.setItem(DONOR_KEY, id)
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not load eligibility.')
-      setData(null)
-    } finally {
-      setLoading(false)
+      setData(await donorApi.eligibility(account.id))
+      setError(null)
+    } catch (err) {
+      setError(err.message)
     }
-  }
+  }, [account])
 
   useEffect(() => {
-    if (donorId) load(donorId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    load()
+  }, [load])
 
-  async function uploadCertificate() {
-    setCertMsg('')
-    try {
-      // In a real app this URL comes from a file-upload widget; we send a stub.
-      const res = await eligibilityApi.uploadCertificate(
-        donorId,
-        'https://files.spondon.app/cert/demo.pdf',
-        'Requesting early unlock — donation date was mistyped.',
-        null,
-      )
-      setCertMsg(res.message || 'Certificate uploaded for admin review.')
-    } catch (e) {
-      setCertMsg(e instanceof ApiError ? e.message : 'Upload failed.')
+  // The countdown ticks off the server's absolute target time rather than
+  // decrementing a local number, so it stays correct across a sleeping tab.
+  const target = data?.countdown?.next_eligible_at
+  useEffect(() => {
+    if (!target) {
+      setRemaining(0)
+      return undefined
     }
+    const end = new Date(target).getTime()
+    const tick = () => setRemaining(Math.max(0, Math.floor((end - Date.now()) / 1000)))
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [target])
+
+  // The moment the clock runs out, ask the server to re-evaluate the flag.
+  const wasCounting = useRef(false)
+  useEffect(() => {
+    if (remaining > 0) wasCounting.current = true
+    else if (wasCounting.current) {
+      wasCounting.current = false
+      load()
+    }
+  }, [remaining, load])
+
+  if (sessionLoading || (!data && !error)) {
+    return (
+      <Shell panel="DONOR PANEL" panelColor="donor" right={<DonorChips />}>
+        <div className="flex items-center gap-2 py-20 text-sm text-text-muted">
+          <Loader2 className="size-4 animate-spin" /> Loading your eligibility…
+        </div>
+      </Shell>
+    )
   }
 
   const eligible = data?.eligible
-  const locked = data && !data.eligible
+  const rules = data?.rules ?? {}
+  const health = data?.health ?? {}
+  const progress = data?.progress ?? {}
+  const cooldownDays =
+    health.last_donation_type === 'PLATELETS'
+      ? rules.platelet_cooldown_days
+      : rules.whole_blood_cooldown_days
 
-  // Derived display values (fall back to placeholders before data loads).
-  const flagRows = data
-    ? [
-        { label: 'Cooldown Lock', value: data.cooldown_locked ? 'LOCKED' : 'CLEAR', color: data.cooldown_locked ? 'text-primary' : 'text-success' },
-        { label: 'Weight Lock', value: data.weight_locked ? 'LOCKED' : 'CLEAR', color: data.weight_locked ? 'text-primary' : 'text-success' },
-        { label: 'Geo-Ripple Pings', value: eligible ? 'RECEIVING' : 'PAUSED', color: eligible ? 'text-admin' : 'text-text-faint' },
-      ]
-    : []
-
-  const profileRows = data
-    ? [
-        ['Weight', data.weight_kg != null ? `${data.weight_kg} kg` : '\u2014'],
-        ['Last Donation', data.last_donation_date ? data.last_donation_date.slice(0, 10) : '\u2014'],
-        ['Type', data.donation_type === 'PLATELET' ? 'Platelets (14d)' : 'Whole Blood (120d)'],
-        ['Next Eligible', data.next_eligible_date ? data.next_eligible_date.slice(0, 10) : 'Now'],
-      ]
-    : []
+  const days = Math.floor(remaining / 86400)
+  const hours = Math.floor((remaining % 86400) / 3600)
+  const mins = Math.floor((remaining % 3600) / 60)
+  const secs = remaining % 60
 
   return (
     <Shell panel="DONOR PANEL" panelColor="donor" right={<DonorChips />}>
@@ -101,69 +103,74 @@ export default function EligibilityEngine() {
             </p>
           </div>
 
-          {/* Demo donor selector - real app reads this from the session */}
-          <Card className="p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Donor ID</p>
-            <div className="mt-2 flex gap-2">
-              <Input
-                value={donorId}
-                onChange={(e) => setDonorId(e.target.value)}
-                placeholder="Paste donor _id"
-                className="text-xs"
-              />
-              <Button className="shrink-0 px-3 text-xs" onClick={() => load(donorId)}>
-                Load
-              </Button>
-            </div>
-          </Card>
-
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] text-primary">
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-              {error}
-            </div>
-          )}
-
-          <Card className="p-4" accent={eligible ? 'success' : 'primary'}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold">Eligibility Flag</p>
-                <p className={`text-[11px] font-semibold ${eligible ? 'text-success' : 'text-primary'}`}>
-                  {loading ? 'Checking\u2026' : eligible ? 'ELIGIBLE \u2014 Active' : locked ? 'LOCKED \u2014 Paused' : '\u2014'}
-                </p>
-              </div>
-              <span className={`size-2.5 rounded-full ${eligible ? 'bg-success' : 'bg-primary'}`} />
-            </div>
-            {flagRows.length > 0 && (
-              <div className="mt-4 space-y-2 border-t border-line pt-3">
-                {flagRows.map((row) => (
-                  <div key={row.label} className="flex items-center justify-between text-[11px]">
-                    <span className="text-text-faint">{row.label}</span>
-                    <span className={`font-semibold ${row.color}`}>{row.value}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          {profileRows.length > 0 && (
-            <Card className="p-4">
-              <p className="text-xs font-bold">Donor Profile</p>
-              <div className="mt-3 space-y-2">
-                {profileRows.map(([k, v]) => (
-                  <div key={k} className="flex items-center justify-between text-[11px]">
-                    <span className="text-text-faint">{k}</span>
-                    <span className="font-medium text-white">{v}</span>
-                  </div>
-                ))}
-              </div>
+            <Card className="p-4" accent="primary">
+              <p className="flex items-center gap-2 text-[11px] text-primary">
+                <TriangleAlert className="size-3.5 shrink-0" /> {error}
+              </p>
             </Card>
           )}
 
-          <Button variant="outline" className="w-full" onClick={uploadCertificate} disabled={!donorId}>
-            <FileUp className="size-4" /> Upload Medical Certificate
-          </Button>
-          {certMsg && <p className="text-[11px] text-text-muted">{certMsg}</p>}
+          <Card className="p-4" accent={eligible ? 'success' : 'warning'}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold">Eligibility Flag</p>
+                <p className={`text-[11px] font-semibold ${eligible ? 'text-success' : 'text-warning'}`}>
+                  {eligible ? 'ELIGIBLE — Active' : 'LOCKED — Paused'}
+                </p>
+              </div>
+              <span className={`size-2.5 rounded-full ${eligible ? 'bg-success' : 'bg-warning'}`} />
+            </div>
+            <div className="mt-4 space-y-2 border-t border-line pt-3">
+              <FlagRow
+                label="Cooldown Lock"
+                value={data?.countdown?.locked_by_cooldown ? 'ACTIVE' : 'CLEAR'}
+                ok={!data?.countdown?.locked_by_cooldown}
+              />
+              <FlagRow
+                label="Weight Lock"
+                value={data?.underweight ? 'ACTIVE' : 'CLEAR'}
+                ok={!data?.underweight}
+              />
+              <FlagRow
+                label="Geo-Ripple Pings"
+                value={eligible ? 'RECEIVING' : 'EXCLUDED'}
+                ok={eligible}
+              />
+            </div>
+            {!eligible && data?.reasons?.length > 0 && (
+              <ul className="mt-3 space-y-1 border-t border-line pt-3 text-[10px] text-text-muted">
+                {data.reasons.map((r) => <li key={r}>{r}</li>)}
+              </ul>
+            )}
+          </Card>
+
+          <Card className="p-4">
+            <p className="text-xs font-bold">Donor Profile</p>
+            <div className="mt-3 space-y-2">
+              <ProfileRow k="Name" v={data?.donor_name} />
+              <ProfileRow k="Blood Type" v={data?.blood_type} tone="text-primary" />
+              <ProfileRow k="Weight" v={health.weight_kg ? `${health.weight_kg} kg` : 'Not set'} />
+              <ProfileRow k="Last Donation" v={fmtDate(health.last_donation_date)} />
+              <ProfileRow
+                k="Type"
+                v={
+                  health.last_donation_type
+                    ? `${health.last_donation_type === 'PLATELETS' ? 'Platelets' : 'Whole Blood'} (${cooldownDays}d)`
+                    : '—'
+                }
+              />
+              <ProfileRow
+                k="Next Eligible"
+                v={data?.countdown?.locked_by_cooldown ? fmtDate(target) : 'Now'}
+                tone={data?.countdown?.locked_by_cooldown ? 'text-warning' : 'text-success'}
+              />
+              <ProfileRow k="Donations" v={String(health.donation_count ?? 0)} />
+            </div>
+          </Card>
+
+          <CertificateUpload donorId={account?.id} onDone={load} />
+
           <Button variant="ghost" className="w-full" onClick={() => navigate('/admin/concurrency')}>
             <UserCog className="size-4" /> Admin Review Panel
           </Button>
@@ -197,68 +204,241 @@ export default function EligibilityEngine() {
             <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard
                 label="Eligibility Status"
-                value={loading ? '\u2026' : eligible ? 'ELIGIBLE' : locked ? 'PAUSED' : '\u2014'}
+                value={eligible ? 'ELIGIBLE' : 'LOCKED'}
                 sub={eligible ? 'Receiving pings' : 'Excluded from pings'}
-                color={eligible ? 'success' : 'primary'}
+                color={eligible ? 'success' : 'warning'}
               />
               <StatCard
                 label="Days Remaining"
-                value={data ? `${data.days_remaining} days` : '\u2014'}
-                sub={data?.lock_period_days ? `of ${data.lock_period_days}-day cooldown` : 'no active cooldown'}
-                color="warning"
+                value={`${days} days`}
+                sub={`of ${progress.total_days ?? cooldownDays}-day cooldown`}
+                color={days > 0 ? 'warning' : 'success'}
                 subColor="text-text-faint"
               />
               <StatCard
                 label="Donation Type"
-                value={data?.donation_type === 'PLATELET' ? 'Platelet' : 'Whole Blood'}
-                sub={data?.donation_type === 'PLATELET' ? '14-day lock period' : '120-day lock period'}
+                value={
+                  health.last_donation_type === 'PLATELETS' ? 'Platelets'
+                    : health.last_donation_type ? 'Whole Blood' : 'None yet'
+                }
+                sub={health.last_donation_type ? `${cooldownDays}-day lock period` : 'No cooldown armed'}
                 color="admin"
                 subColor="text-text-faint"
               />
               <StatCard
                 label="Weight Status"
-                value={data?.weight_kg != null ? `${data.weight_kg} kg` : '\u2014'}
-                sub={data?.weight_locked ? 'Below 50 kg threshold' : 'Above 50 kg threshold'}
-                color={data?.weight_locked ? 'primary' : 'success'}
+                value={health.weight_kg ? `${health.weight_kg} kg` : 'Not set'}
+                sub={
+                  data?.underweight
+                    ? `Below ${rules.min_weight_kg} kg threshold`
+                    : `Above ${rules.min_weight_kg} kg threshold`
+                }
+                color={data?.underweight ? 'warning' : 'success'}
               />
             </div>
 
             <Card className="mt-4 p-6">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold text-text-muted">Live Countdown to Eligibility</p>
-                <span className={`inline-flex items-center gap-2 text-xs font-semibold ${eligible ? 'text-success' : 'text-primary'}`}>
-                  <span className={`size-2 rounded-full ${eligible ? 'bg-success' : 'bg-primary'}`} />
-                  {eligible ? 'Eligible Now' : 'Locked'}
+                <span
+                  className={`inline-flex items-center gap-2 text-xs font-semibold ${
+                    remaining > 0 ? 'text-warning' : 'text-success'
+                  }`}
+                >
+                  <span className={`size-2 rounded-full ${remaining > 0 ? 'bg-warning' : 'bg-success'}`} />
+                  {remaining > 0 ? 'Counting down' : 'Eligible Now'}
                 </span>
               </div>
-              <div className={`mt-6 flex flex-col items-center justify-center rounded-xl border py-10 ${eligible ? 'border-success/20 bg-success/[0.05]' : 'border-primary/20 bg-primary/[0.05]'}`}>
-                {loading ? (
-                  <Loader2 className="size-10 animate-spin text-text-faint" />
-                ) : eligible ? (
-                  <CheckCircle2 className="size-10 text-success" />
+
+              <div
+                className={`mt-6 flex flex-col items-center justify-center rounded-xl border py-10 ${
+                  remaining > 0
+                    ? 'border-warning/20 bg-warning/[0.05]'
+                    : 'border-success/20 bg-success/[0.05]'
+                }`}
+              >
+                {remaining > 0 ? (
+                  <>
+                    <Droplet className="size-10 text-warning" />
+                    <p className="mt-3 font-mono text-2xl font-bold text-warning">
+                      {days}d : {String(hours).padStart(2, '0')}h :{' '}
+                      {String(mins).padStart(2, '0')}m : {String(secs).padStart(2, '0')}s
+                    </p>
+                    <p className="mt-1 text-xs text-text-faint">
+                      {health.last_donation_type === 'PLATELETS' ? 'Platelet' : 'Whole-blood'}{' '}
+                      cooldown of {progress.total_days ?? cooldownDays} days ends{' '}
+                      {new Date(target).toLocaleString()}
+                    </p>
+                  </>
                 ) : (
-                  <AlertTriangle className="size-10 text-primary" />
+                  <>
+                    <CheckCircle2 className="size-10 text-success" />
+                    <p className="mt-3 text-2xl font-bold text-success">0d : 00h : 00m</p>
+                    <p className="mt-1 text-xs text-text-faint">
+                      {health.last_donation_date
+                        ? `Cooldown of ${progress.total_days ?? cooldownDays} days has fully elapsed`
+                        : 'No donation on record — no cooldown applies'}
+                    </p>
+                  </>
                 )}
-                <p className={`mt-3 text-2xl font-bold ${eligible ? 'text-success' : 'text-primary'}`}>
-                  {data ? data.countdown : '\u2014'}
-                </p>
-                <p className="mt-1 text-xs text-text-faint">
-                  {eligible
-                    ? 'Cooldown has fully elapsed - donor is receiving pings'
-                    : data?.next_eligible_date
-                      ? `Next eligible on ${data.next_eligible_date.slice(0, 10)}`
-                      : 'Load a donor to see their live countdown'}
-                </p>
               </div>
+
+              {progress.total_days > 0 && (
+                <div className="mt-4">
+                  <div className="flex justify-between text-[11px] text-text-faint">
+                    <span>Recovery progress</span>
+                    <span>
+                      {progress.elapsed_days} / {progress.total_days} days
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-line">
+                    <div
+                      className={`h-full rounded-full ${remaining > 0 ? 'bg-warning' : 'bg-success'}`}
+                      style={{ width: `${progress.percent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="mt-4 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/[0.05] px-4 py-3 text-[11px] text-text-muted">
                 <Droplet className="size-3.5 shrink-0 text-primary" />
-                Platelet (apheresis) donations lock eligibility for only 14 days -
-                far less depleting than whole blood.
+                Platelet (apheresis) donations lock eligibility for only{' '}
+                {rules.platelet_cooldown_days} days — far less depleting than the{' '}
+                {rules.whole_blood_cooldown_days}-day whole-blood window.
               </div>
+
+              {data?.cooldown_waived_at && (
+                <p className="mt-3 text-[11px] text-success">
+                  An admin released this cooldown early on {fmtDate(data.cooldown_waived_at)} after
+                  reviewing your medical certificate.
+                </p>
+              )}
             </Card>
           </div>
         </section>
       </div>
     </Shell>
+  )
+}
+
+function FlagRow({ label, value, ok }) {
+  return (
+    <div className="flex items-center justify-between text-[11px]">
+      <span className="text-text-faint">{label}</span>
+      <span className={`font-semibold ${ok ? 'text-success' : 'text-warning'}`}>{value}</span>
+    </div>
+  )
+}
+
+function ProfileRow({ k, v, tone = 'text-white' }) {
+  return (
+    <div className="flex items-center justify-between text-[11px]">
+      <span className="text-text-faint">{k}</span>
+      <span className={`font-medium ${tone}`}>{v ?? '—'}</span>
+    </div>
+  )
+}
+
+/**
+ * Corner case: a donor locked out for months by a mistyped donation date can
+ * upload a timestamped certificate for an admin to review and clear early.
+ */
+function CertificateUpload({ donorId, onDone }) {
+  const [open, setOpen] = useState(false)
+  const [note, setNote] = useState('')
+  const [correctedDate, setCorrectedDate] = useState('')
+  const [file, setFile] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState(null)
+  const [error, setError] = useState(null)
+  const [mine, setMine] = useState([])
+
+  const loadMine = useCallback(async () => {
+    if (!donorId) return
+    try {
+      setMine(await donorApi.certificates(donorId))
+    } catch {
+      /* the list is supplementary — a failure here must not block the form */
+    }
+  }, [donorId])
+
+  useEffect(() => {
+    loadMine()
+  }, [loadMine])
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!donorId || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await donorApi.uploadCertificate(donorId, {
+        note: note || null,
+        image: file ? await fileToDataUrl(file) : null,
+        issued_at: new Date().toISOString(),
+        corrected_donation_date: correctedDate
+          ? new Date(correctedDate).toISOString()
+          : null,
+      })
+      setMsg('Submitted — an admin will review it shortly.')
+      setNote('')
+      setCorrectedDate('')
+      setFile(null)
+      setOpen(false)
+      loadMine()
+      onDone?.()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const pending = mine.filter((c) => c.status === 'PENDING').length
+
+  return (
+    <Card className="p-4">
+      <Button variant="outline" className="w-full" onClick={() => setOpen((v) => !v)}>
+        <FileUp className="size-4" /> Upload Medical Certificate
+      </Button>
+
+      {msg && <p className="mt-2 text-[11px] text-success">{msg}</p>}
+      {pending > 0 && (
+        <p className="mt-2 text-center text-[10px] text-text-faint">
+          <Badge color="warning">{pending} awaiting admin review</Badge>
+        </p>
+      )}
+
+      {open && (
+        <form className="mt-4 space-y-3" onSubmit={submit}>
+          <Field label="Why should the cooldown be lifted?">
+            <Input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. donation date was mistyped"
+            />
+          </Field>
+          <Field label="Correct donation date" hint="Optional — if the stored date was wrong">
+            <Input
+              type="date"
+              value={correctedDate}
+              onChange={(e) => setCorrectedDate(e.target.value)}
+            />
+          </Field>
+          <Field label="Certificate photo" hint="Timestamped document from your clinic">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="w-full text-[11px] text-text-muted file:mr-3 file:rounded-full file:border-0 file:bg-donor/20 file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-donor"
+            />
+          </Field>
+          {error && <p className="text-[11px] text-primary">{error}</p>}
+          <Button type="submit" disabled={busy} className="w-full">
+            {busy && <Loader2 className="size-4 animate-spin" />} Submit for review
+          </Button>
+        </form>
+      )}
+    </Card>
   )
 }

@@ -1,5 +1,13 @@
-.venv
-__pycache__
-*.pyc
+# Keep the build context small and secrets out of the image.
 .env
-.git
+.env.*
+!.env.example
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+postman/
+.postman/

@@ -1,0 +1,20 @@
+{
+  "folders": [
+    {
+      "name": "Spondon (root)",
+      "path": "."
+    },
+    {
+      "name": "frontend",
+      "path": "frontend"
+    },
+    {
+      "name": "backend",
+      "path": "backend"
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder:backend}/.venv/Scripts/python.exe",
+    "python.terminal.activateEnvironment": true
+  }
+}

@@ -1,20 +1,25 @@
-# --- Base image: hালকা (slim) Python 3.11 ---
-FROM python:3.11-slim
+# Spondon backend — FastAPI + Beanie (async MongoDB ODM).
+# Serves the API on port 1184 (last four digits of student ID 23101184).
+FROM python:3.12-slim
 
-# Container-er ভেতরে working directory
+# Unbuffered stdout so `docker logs` shows the dispatch/escalation log lines
+# as they happen rather than after the buffer flushes.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=1184
+
 WORKDIR /app
 
-# Age শুধু requirements.txt copy kore install kori,
-# eতে Docker cache use hoy — code change korle pip install abar dhore run hobe na
+# Dependencies first: this layer is cached until requirements.txt changes.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Baki shob backend code copy koro
 COPY . .
 
-# Container er 1184 port ke "expose" korlam (documentation purpose,
-# actual mapping docker-compose.yml e hobe)
 EXPOSE 1184
 
-# Container start hole ei command ta run hobe
-CMD ["python", "-m", "app.main"]
+# Inside a container the DB is a sibling service, not localhost. Compose sets
+# this too; the default keeps a bare `docker run --link`/network run working.
+ENV MONGODB_URI=mongodb://mongo:27017
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "1184"]

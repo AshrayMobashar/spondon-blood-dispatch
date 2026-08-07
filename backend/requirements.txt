@@ -3,5 +3,11 @@ uvicorn[standard]>=0.29
 beanie>=1.26,<2
 python-dotenv>=1.0
 httpx>=0.27
+# WebSocket transport for the live dispatch feed (City-Wide Radar). Ships with
+# uvicorn[standard], named here because the app and smoke test import it.
+websockets>=12.0
 pyjwt>=2.8
 bcrypt>=4.0,<5
+# IANA timezone database — Windows ships no system tz data, and Sleep Mode
+# windows are evaluated in local (Asia/Dhaka) time.
+tzdata>=2024.1

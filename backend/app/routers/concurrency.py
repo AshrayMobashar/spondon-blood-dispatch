@@ -5,15 +5,26 @@ everyone else). No-shows are tracked: two within a single year quietly drop a
 donor from the priority pool. Genuine no-shows can be appealed and cleared by an
 admin.
 """
+import base64
+import binascii
 from datetime import timedelta
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pymongo import ReturnDocument
 
+from .. import config, integrations
 from ..db import get_collection
-from ..models import Donor, BloodRequest, Appeal
-from ..schemas import RequestCreate, AcceptBody, ArrivalBody, AppealCreate, AppealResolve
+from ..dispatch import is_dispatchable, run_dispatch
+from ..eligibility import recalculate
+from ..models import Account, BloodRequest, Appeal, GeoPoint, SHADOW_BANNED
+from ..schemas import (
+    RequestCreate, AcceptBody, ArrivalBody, AppealCreate, AppealResolve, SlipUpload,
+)
+from ..realtime import feed
+from ..security import get_optional_account
 from ..services import to_oid, serialize, utcnow
+from ..zones import zone_of
 
 router = APIRouter()
 
@@ -27,8 +38,8 @@ async def _get_request(request_id: str) -> BloodRequest:
     return req
 
 
-async def _get_donor(donor_id: str) -> Donor:
-    donor = await Donor.get(to_oid(donor_id))
+async def _get_donor(donor_id: str) -> Account:
+    donor = await Account.get(to_oid(donor_id))
     if not donor:
         raise HTTPException(status_code=404, detail="Donor not found")
     return donor
@@ -36,16 +47,117 @@ async def _get_donor(donor_id: str) -> Donor:
 
 # ── Requests ─────────────────────────────────────────────────────────
 @router.post("/requests", status_code=201, summary="Create a blood request (OPEN)")
-async def create_request(body: RequestCreate):
+async def create_request(
+    body: RequestCreate, requester: Optional[Account] = Depends(get_optional_account)
+):
+    """Log an emergency.
+
+    The requester is taken from the bearer token when there is one — that link
+    is what lets a later shadow ban reach this request. A banned account cannot
+    get this far: `get_optional_account` rejects it at the door.
+    """
+    if requester is None and body.requester_id:
+        requester = await Account.get(to_oid(body.requester_id))
+
+    location = None
+    if body.hospital_lat is not None and body.hospital_lng is not None:
+        location = GeoPoint(
+            lat=body.hospital_lat, lng=body.hospital_lng, road_segment=body.road_segment
+        )
+
     req = BloodRequest(
         patient_name=body.patient_name,
         hospital=body.hospital,
-        blood_type=body.blood_type,
-        severity=body.severity,
+        blood_type=body.blood_type.strip().upper(),
+        component=body.component.upper(),
+        units=body.units,
+        severity=body.severity.upper(),
         road_segment=body.road_segment,
+        hospital_location=location,
+        requester_id=str(requester.id) if requester else None,
+        requester_name=requester.name if requester else None,
+        # The shadow ban applies at creation, not just retroactively: a flagged
+        # account's new requests are born muted while still reading OPEN.
+        broadcast=not (requester is not None and requester.status == SHADOW_BANNED),
     )
     await req.insert()
     return serialize(req)
+
+
+# ── Doctor's-slip OCR verification (Module 2, Feature 3) ─────────────
+@router.post("/requests/{request_id}/slip", summary="Upload the requisition slip for OCR")
+async def upload_slip(request_id: str, body: SlipUpload):
+    """Run the slip photo through OCR before any dispatch is authorised.
+
+    Three outcomes, and only the first releases the dispatch automatically:
+
+      * confident match          → OCR_CONFIRMED, request may broadcast
+      * illegible / low-confidence → NEEDS_REVIEW, human queue (never auto-rejected)
+      * not a medical document   → REJECTED, with a prompt for a real slip
+
+    With no OCR engine configured every slip takes the middle path, which is the
+    same queue an unreadable slip would land in.
+    """
+    req = await _get_request(request_id)
+
+    raw = body.image
+    mime = body.mime
+    if raw.startswith("data:"):
+        header, _, payload = raw.partition(",")
+        mime = header[5:].split(";")[0] or mime
+        raw = payload
+    try:
+        base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="image must be base64 or a data: URI")
+
+    result = await integrations.read_slip(raw, mime, req.component)
+
+    req.slip_image = f"data:{mime};base64,{raw}"
+    req.ocr_confidence = result.get("confidence")
+    req.ocr_notes = result.get("notes") or result.get("error")
+    req.ocr_simulated = bool(result.get("simulated"))
+    req.slip_reviewed_by = None
+    req.slip_reviewed_at = None
+
+    confidence = result.get("confidence")
+    component = (result.get("component") or "").upper()
+
+    if result.get("is_medical_slip") is False:
+        # Schema mismatch — halt rather than score it as a bad slip.
+        req.slip_status = "REJECTED"
+        message = "That does not look like a laboratory requisition slip. Please upload a clear photo of the doctor's slip."
+    elif confidence is None or confidence < config.OCR_CONFIDENCE_THRESHOLD:
+        req.slip_status = "NEEDS_REVIEW"
+        message = "Handwriting could not be read confidently — a human reviewer will verify it shortly."
+    elif component and component != req.component.upper():
+        req.slip_status = "NEEDS_REVIEW"
+        message = (
+            f"The slip appears to reference {component} but the request is for "
+            f"{req.component} — sent for human review."
+        )
+    else:
+        req.slip_status = "OCR_CONFIRMED"
+        message = "Slip verified — dispatch authorised."
+
+    await req.save()
+    return {
+        "request_id": str(req.id),
+        "slip_status": req.slip_status,
+        "ocr_confidence": req.ocr_confidence,
+        "ocr_engine": "live" if integrations.ocr_configured() else "not configured",
+        "extracted": {k: result.get(k) for k in
+                      ("patient_name", "hospital", "blood_type", "component", "units")},
+        "dispatch_authorised": req.slip_cleared,
+        "message": message,
+    }
+
+
+@router.post("/requests/{request_id}/dispatch", summary="Broadcast this request to donors")
+async def dispatch_request(request_id: str):
+    """Fire the ping. Safe to call repeatedly — that is how the ripple widens."""
+    req = await _get_request(request_id)
+    return await run_dispatch(req)
 
 
 @router.get("/requests", summary="List blood requests")
@@ -71,6 +183,18 @@ async def accept_request(request_id: str, body: AcceptBody):
     the document already LOCKED and gets a polite 409 'Donor Secured'."""
     oid = to_oid(request_id)
     donor = await _get_donor(body.donor_id)
+    req = await _get_request(request_id)
+
+    # A donor who was never pingable must not be able to lock a request by
+    # posting straight to this endpoint.
+    recalculate(donor)
+    await donor.save()
+    allowed, why = is_dispatchable(donor, req)
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail={"message": "You cannot accept this request.", "reason": why},
+        )
 
     collection = get_collection(BloodRequest)
     updated = await collection.find_one_and_update(
@@ -100,6 +224,19 @@ async def accept_request(request_id: str, body: AcceptBody):
             },
         )
 
+    # Radar: the search is over. Zone only — the family learns help is coming
+    # and roughly from where, not who or from what address.
+    await feed.emit(
+        "donor_secured",
+        {
+            "request_id": request_id,
+            "from_zone": zone_of(donor.current_location),
+            "hospital_zone": zone_of(req.hospital_location),
+            "secured_at": updated["secured_at"].isoformat(),
+        },
+        request_id=request_id,
+    )
+
     return {
         "message": "You've secured this request",
         "request_id": str(updated["_id"]),
@@ -124,11 +261,33 @@ async def record_arrival(request_id: str, body: ArrivalBody):
     if body.showed_up:
         req.status = "FULFILLED"
         await req.save()
+
+        # A fulfilled request *is* a donation, so it arms the cooldown here —
+        # platelets for 14 days, anything else for 120.
+        kind = config.PLATELETS if req.component.upper() == "PLATELETS" else config.WHOLE_BLOOD
+        now = utcnow()
+        donor.health.last_donation_date = now
+        donor.health.last_donation_type = kind
+        donor.health.donation_count += 1
+        donor.eligibility.cooldown_waived_at = None
+        donor.eligibility.cooldown_waived_by = None
+        recalculate(donor, now=now)
+        await donor.save()
+
         return {
             "request_id": str(req.id),
             "donor_id": str(donor.id),
             "status": "FULFILLED",
-            "message": "Donor showed up — request fulfilled.",
+            "donation_type": kind,
+            "cooldown_days": config.COOLDOWN_DAYS[kind],
+            "next_eligible_at": (
+                donor.eligibility.cooldown_until.isoformat()
+                if donor.eligibility.cooldown_until else None
+            ),
+            "message": (
+                f"Donor showed up — request fulfilled. Eligibility locked for "
+                f"{config.COOLDOWN_DAYS[kind]} days."
+            ),
         }
 
     # No-show → record it and apply the 2-in-a-year rule.
@@ -214,7 +373,7 @@ async def resolve_appeal(appeal_id: str, body: AppealResolve):
     appeal.status = "CLEARED"
     await appeal.save()
 
-    donor = await Donor.get(to_oid(appeal.donor_id))
+    donor = await Account.get(to_oid(appeal.donor_id))
     restored = False
     if donor:
         if donor.reliability.no_show_dates:

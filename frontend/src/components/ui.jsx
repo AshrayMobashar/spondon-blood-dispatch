@@ -54,19 +54,20 @@ export function Button({ variant = 'primary', className = '', as = 'button', ...
 }
 
 /* ── Toggle switch ───────────────────────────────────────────────── */
-export function Toggle({ defaultOn = false, color = 'donor', onChange }) {
+export function Toggle({ defaultOn = false, color = 'donor', onChange, disabled = false }) {
   const [on, setOn] = useState(defaultOn)
   const bg = accents[color].dot
   return (
     <button
       type="button"
       aria-pressed={on}
+      disabled={disabled}
       onClick={() => {
         const v = !on
         setOn(v)
         onChange?.(v)
       }}
-      className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors ${
+      className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
         on ? `${bg} border-transparent` : 'border-[#374151] bg-line'
       }`}
     >
