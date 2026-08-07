@@ -296,11 +296,27 @@ export default function GeoRipple() {
 
             <div className="mt-5 rounded-lg border border-admin/20 bg-admin/[0.05] px-4 py-3 text-[11px] text-text-muted">
               <span className="font-semibold text-admin">River-route override:</span>{' '}
+              {/* Three states, not two — a key that is present but refused is a
+                  different problem from no key at all, and telling an operator to
+                  set a variable they already set sends them the wrong way. */}
               {cfg?.integrations?.maps ? (
                 <>
-                  the Maps API is configured, so straight-line radius is replaced with real
+                  the Maps API is answering, so straight-line radius is replaced with real
                   driving-route distance — a donor across the Buriganga with no nearby bridge is
                   correctly treated as far away.
+                </>
+              ) : cfg?.integrations?.maps_key_present ? (
+                <>
+                  <span className="font-semibold text-warning">
+                    a Maps key is configured but Google refused it
+                  </span>
+                  , so the ripple is measuring straight-line distance. Donors across a river will
+                  be treated as nearer than they can actually drive.{' '}
+                  {cfg.integrations.maps_error && (
+                    <span className="mt-1 block break-words text-[10px] text-text-faint">
+                      {cfg.integrations.maps_error}
+                    </span>
+                  )}
                 </>
               ) : (
                 <>
