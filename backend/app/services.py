@@ -59,6 +59,38 @@ def in_sleep_window(now_hhmm: str, start: str, end: str) -> bool:
     return now >= s or now < e  # overnight window
 
 
+# ── Road-segment name matching ───────────────────────────────────────
+def seg_key(segment: Optional[str]) -> Optional[str]:
+    """Canonical form of a road-segment name for *matching* (not display).
+
+    The commute feature lives or dies on string equality between the segment a
+    donor typed into their saved route and the one a hospital request carries.
+    A donor who saves "Mirpur Road" while their phone's GPS reports "mirpur
+    road", or a request opened on " Kazipara " with a stray space, would
+    silently never match under raw `==` — the ping just never fires and nothing
+    says why. Comparing through this key (trimmed, case-folded, internal runs of
+    whitespace collapsed) makes the match forgiving without touching the
+    original text a donor sees on their screen.
+    """
+    if segment is None:
+        return None
+    key = " ".join(segment.split()).casefold()
+    return key or None
+
+
+def normalize_segments(segments: list[str]) -> list[str]:
+    """Trim blanks and drop empty entries from a saved route, preserving the
+    donor's original casing and order for display."""
+    out, seen = [], set()
+    for raw in segments:
+        trimmed = " ".join(raw.split())
+        key = trimmed.casefold()
+        if trimmed and key not in seen:      # skip blanks and duplicates
+            seen.add(key)
+            out.append(trimmed)
+    return out
+
+
 LIFE_THREATENING = "LIFE_THREATENING"
 
 
@@ -83,12 +115,10 @@ def gps_is_fresh(donor: Account, now: Optional[datetime] = None) -> bool:
 def route_is_saved_for(donor: Account, req: BloodRequest) -> bool:
     """Does the request sit on a segment of this donor's (active) saved route?"""
     route = donor.commute_route
-    return bool(
-        route
-        and route.enabled
-        and req.road_segment
-        and req.road_segment in route.segments
-    )
+    if not (route and route.enabled and req.road_segment):
+        return False
+    target = seg_key(req.road_segment)
+    return target in {seg_key(s) for s in route.segments}
 
 
 def on_route_now(
@@ -104,7 +134,7 @@ def on_route_now(
         return False
     if not gps_is_fresh(donor, now):
         return False
-    return donor.current_location.road_segment == req.road_segment
+    return seg_key(donor.current_location.road_segment) == seg_key(req.road_segment)
 
 
 def decide_ping(

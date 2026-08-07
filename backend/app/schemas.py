@@ -1,9 +1,10 @@
 """Pydantic request-body schemas (the shapes Postman/clients POST/PUT)."""
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 PHONE_PATTERN = r"^01\d{9}$"      # Bangladeshi mobile, as typed without +880
+HHMM_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"   # 00:00–23:59, 24-hour
 
 
 # ── Registration, Authentication & Profile ───────────────────────────
@@ -107,10 +108,13 @@ class DonorCreate(BaseModel):
 
 class SleepModeUpdate(BaseModel):
     enabled: bool = True
-    start: str = Field("23:00", examples=["23:00"])
-    end: str = Field("07:00", examples=["07:00"])
+    start: str = Field("23:00", pattern=HHMM_PATTERN, examples=["23:00"])
+    end: str = Field("07:00", pattern=HHMM_PATTERN, examples=["07:00"])
     allow_extreme_emergencies: bool = False
     dnd_on: bool = False
+    # start/end are matched against HHMM_PATTERN so a malformed "7am" or "25:99"
+    # is rejected with a 422 at the boundary — never reaching the sleep-window
+    # maths, where int("7am") would otherwise 500 the whole dispatch evaluation.
 
 
 class RouteUpdate(BaseModel):
@@ -118,6 +122,25 @@ class RouteUpdate(BaseModel):
     label: Optional[str] = Field(None, examples=["Home → Office"])
     enabled: bool = Field(
         True, description="Pause route-aware matching without discarding the saved segments"
+    )
+
+    @field_validator("segments")
+    @classmethod
+    def _non_empty_route(cls, v: List[str]) -> List[str]:
+        """A saved route with no usable segment names cannot match anything, so
+        it is a client error rather than a silently inert route."""
+        if not any(s and s.strip() for s in v):
+            raise ValueError("A commute route needs at least one non-blank road segment.")
+        return v
+
+
+class PingPreview(BaseModel):
+    """Dry-run the ping decision for one donor against one open request."""
+    request_id: str = Field(..., description="Id of the blood request to evaluate against")
+    now: Optional[str] = Field(
+        None, pattern=HHMM_PATTERN,
+        description="HH:MM override for deterministically previewing the sleep window",
+        examples=["23:30"],
     )
 
 

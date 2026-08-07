@@ -10,15 +10,15 @@ from fastapi import APIRouter, HTTPException
 from .. import config, integrations
 from ..dispatch import (
     CITYWIDE_RARE, dispatch_block_reason, escalate, escalation_due,
-    is_dispatchable, run_dispatch, triage,
+    evaluate_donor, is_dispatchable, run_dispatch, triage,
 )
 from ..eligibility import recalculate
 from ..models import Account, BloodRequest, HealthProfile, PingLog, CommuteRoute, GeoPoint, utcnow
 from ..realtime import feed
 from ..schemas import (
-    DonorCreate, SleepModeUpdate, RouteUpdate, LocationUpdate, EvaluateBody,
+    DonorCreate, SleepModeUpdate, RouteUpdate, LocationUpdate, EvaluateBody, PingPreview,
 )
-from ..services import to_oid, serialize
+from ..services import to_oid, serialize, normalize_segments
 from ..zones import zone_of
 
 router = APIRouter()
@@ -113,11 +113,31 @@ async def update_sleep_mode(donor_id: str, body: SleepModeUpdate):
 
 
 # ── Commute route ────────────────────────────────────────────────────
+@router.get("/donors/{donor_id}/commute-route", summary="Get the saved commute route")
+async def get_route(donor_id: str):
+    """Read back the saved route so a donor's app can render it.
+
+    Symmetry with sleep-mode: there is a GET for the route as well as the
+    write/toggle/clear actions, so the UI never has to fetch the whole donor
+    document just to show a commute.
+    """
+    donor = await _get_donor(donor_id)
+    return {
+        "donor_id": str(donor.id),
+        "commute_route": (
+            donor.commute_route.model_dump(mode="json") if donor.commute_route else None
+        ),
+    }
+
+
 @router.put("/donors/{donor_id}/commute-route", summary="Save/replace commute route")
 async def save_route(donor_id: str, body: RouteUpdate):
     donor = await _get_donor(donor_id)
+    segments = normalize_segments(body.segments)
+    # The schema guarantees at least one non-blank segment, so an all-blank list
+    # never reaches here to produce an inert route.
     donor.commute_route = CommuteRoute(
-        segments=body.segments, label=body.label, enabled=body.enabled
+        segments=segments, label=body.label, enabled=body.enabled
     )
     await donor.save()
     return {
@@ -169,6 +189,40 @@ async def update_location(donor_id: str, body: LocationUpdate):
         "message": "Location updated",
         "current_location": donor.current_location.model_dump(mode="json"),
     }
+
+
+@router.delete("/donors/{donor_id}/location", summary="Clear the live GPS fix (go offline)")
+async def clear_location(donor_id: str):
+    """Drop the donor's last known position — e.g. they revoked location or the
+    app went to background.
+
+    Once cleared there is no fix to compare against the saved route, so the
+    proactive commute ping correctly stops firing (`on_route_now` needs a fresh
+    position) — the same corner case as a stale fix, reached deliberately.
+    """
+    donor = await _get_donor(donor_id)
+    donor.current_location = None
+    await donor.save()
+    return {"donor_id": str(donor.id), "message": "Live location cleared"}
+
+
+# ── Per-donor ping preview (dry run) ─────────────────────────────────
+@router.post("/donors/{donor_id}/ping-preview",
+             summary="Would THIS donor be pinged for a request right now, and why?")
+async def ping_preview(donor_id: str, body: PingPreview):
+    """A side-effect-free dry run of the Smart-Ping rules for one donor.
+
+    Returns the full four-stage verdict (gate → pool → reach → decision) without
+    dispatching to anyone, writing a PingLog, or sending a push. This is what a
+    donor's settings screen calls to answer "with these settings, would a
+    life-threatening request at 2 a.m. actually wake me?" — the feature's
+    behaviour made legible before a real emergency ever tests it.
+    """
+    donor = await _get_donor(donor_id)
+    req = await BloodRequest.get(to_oid(body.request_id))
+    if not req:
+        raise HTTPException(status_code=404, detail="Blood request not found")
+    return evaluate_donor(donor, req, now_hhmm=body.now)
 
 
 # ── Dispatch evaluation (the rule engine) ────────────────────────────
