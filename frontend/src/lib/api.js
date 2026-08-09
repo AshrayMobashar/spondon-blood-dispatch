@@ -161,10 +161,16 @@ export const donorApi = {
   sleepMode: (id) => request(`/donors/${id}/sleep-mode`, { auth: 'user' }),
   saveSleepMode: (id, body) =>
     request(`/donors/${id}/sleep-mode`, { method: 'PUT', auth: 'user', body }),
-  saveRoute: (id, segments, label) =>
+  /** `points` are optional map coordinates for the segments; when a donor draws
+   *  their route on the Leaflet map we save both so it can be redrawn, while the
+   *  named `segments` stay the thing the engine matches on. */
+  saveRoute: (id, segments, label, points = null) =>
     request(`/donors/${id}/commute-route`, {
-      method: 'PUT', auth: 'user', body: { segments, label },
+      method: 'PUT', auth: 'user', body: { segments, label, points },
     }),
+  /** The donor's route + live fix + active pings around it — the one call the
+   *  commute map renders from. */
+  nearbyPings: (id) => request(`/donors/${id}/nearby-pings`, { auth: 'user' }),
   /** Pause/resume route matching. Unlike clearRoute this keeps the segments,
    *  so switching it back on needs no re-entry. */
   toggleRoute: (id, enabled) =>

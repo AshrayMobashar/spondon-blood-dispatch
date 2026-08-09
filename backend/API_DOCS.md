@@ -164,6 +164,11 @@ async def update_sleep_mode(donor_id: str, body: SleepModeUpdate):
 { "segments": ["Mirpur-Rd", "Kazipara", "Shewrapara"], "label": "Home to Office", "enabled": true }
 ```
 
+`points` is optional: when the donor draws their route on the Leaflet map the
+client also sends `[{ "lat": 23.806, "lng": 90.368, "name": "Kazipara" }, …]` so
+the line can be redrawn later. The **names** are still the only thing the engine
+matches on — `points` are display coordinates, nothing more.
+
 ```python
 @router.put("/donors/{donor_id}/commute-route")
 async def save_route(donor_id: str, body: RouteUpdate):
@@ -288,6 +293,42 @@ async def clear_location(donor_id: str):
     await donor.save()
     return {"donor_id": str(donor.id), "message": "Live location cleared"}
 ```
+
+---
+
+## 1.8c Nearby pings (commute map data)  ⭐ map
+
+Everything the donor's Leaflet map renders in one call: their saved route, their
+live fix, and every **OPEN, broadcasting** request that carries a hospital
+location — each tagged with the flags the map colours by.
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/donors/{donor_id}/nearby-pings` |
+| **Params** | Path: `donor_id` |
+
+**Response (shape)**
+```json
+{
+  "donor_id": "…", "blood_type": "B+",
+  "current_location": { "lat": 23.806, "lng": 90.368, "road_segment": "Kazipara" },
+  "commute_route": { "segments": ["Kazipara"], "points": [{ "lat": 23.806, "lng": 90.368, "name": "Kazipara" }], "enabled": true },
+  "pings": [
+    {
+      "request_id": "…", "hospital": "Dhaka Medical College", "blood_type": "B+",
+      "severity": "LIFE_THREATENING", "road_segment": "Kazipara",
+      "lat": 23.7261, "lng": 90.3969,
+      "blood_type_match": true, "on_saved_route": true, "on_route_now": true,
+      "distance_km": 9.36
+    }
+  ]
+}
+```
+
+`on_route_now` (live GPS on a saved segment right now) is the zero-extra-travel
+case the map paints red; `on_saved_route` is indigo; a plain blood-type match is
+the donor's own type colour. A shadow-muted request (`broadcast=false`) never
+appears here — the same gate that keeps it out of dispatch keeps it off the map.
 
 ---
 
@@ -712,6 +753,7 @@ async def resolve_appeal(appeal_id: str, body: AppealResolve):
 | 1.7 | DELETE | `/api/donors/{id}/commute-route` |
 | 1.8 | PUT | `/api/donors/{id}/location` |
 | 1.8b | DELETE | `/api/donors/{id}/location` |
+| 1.8c | GET | `/api/donors/{id}/nearby-pings` |
 | 1.9 | POST | `/api/dispatch/evaluate` |
 | 1.9b | POST | `/api/donors/{id}/ping-preview` |
 | 1.10 | GET | `/api/ping-logs` |

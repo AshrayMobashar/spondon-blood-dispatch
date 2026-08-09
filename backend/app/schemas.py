@@ -117,8 +117,19 @@ class SleepModeUpdate(BaseModel):
     # maths, where int("7am") would otherwise 500 the whole dispatch evaluation.
 
 
+class RoutePointIn(BaseModel):
+    """A geo-located waypoint the donor dropped on their map."""
+    lat: float = Field(..., examples=[23.8069])
+    lng: float = Field(..., examples=[90.3687])
+    name: Optional[str] = Field(None, examples=["Mirpur-Rd"])
+
+
 class RouteUpdate(BaseModel):
     segments: List[str] = Field(..., examples=[["Mirpur-Rd", "Kazipara", "Shewrapara"]])
+    points: Optional[List[RoutePointIn]] = Field(
+        None,
+        description="Optional map coordinates for the segments — drawing only, matching still uses names",
+    )
     label: Optional[str] = Field(None, examples=["Home → Office"])
     enabled: bool = Field(
         True, description="Pause route-aware matching without discarding the saved segments"
