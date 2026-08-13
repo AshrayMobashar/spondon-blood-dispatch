@@ -15,13 +15,35 @@ def to_oid(value: str) -> PydanticObjectId:
         return PydanticObjectId(value)
     except Exception:
         raise HTTPException(status_code=400, detail=f"Invalid id: {value!r}")
+def _fix_naive_datetimes(value):
+    """Recursively stamp naive datetimes as UTC before JSON serialization,
+    and stringify any Mongo/Beanie ObjectId left in the tree.
 
+    MongoDB round-trips strip tzinfo off datetimes it returns (it stores
+    everything as UTC internally but hands back naive Python objects), so a
+    freshly-read document loses the timezone marker that a freshly-created
+    one still has. Everything this app stores is UTC (see `models.utcnow`),
+    so re-attaching `tzinfo=utc` here is correct, not a guess.
+    """
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, PydanticObjectId):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _fix_naive_datetimes(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_fix_naive_datetimes(v) for v in value]
+    return value
 
 def serialize(doc) -> dict:
     """JSON-safe dict with `id` (str) instead of the raw ObjectId `_id`."""
     if doc is None:
         return None
-    return doc.model_dump(mode="json")
+    from pydantic_core import to_jsonable_python
+
+    fixed = _fix_naive_datetimes(doc.model_dump(mode="python"))
+    return to_jsonable_python(fixed)
+    #return doc.model_dump(mode="json")
 
 
 # ── Local wall-clock time ────────────────────────────────────────────
