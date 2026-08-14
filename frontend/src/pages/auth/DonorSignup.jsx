@@ -6,6 +6,7 @@ import {
 import Shell from '../../components/Shell.jsx'
 import { Card, Button, Field, Input, Select, OtpInput, Badge } from '../../components/ui.jsx'
 import { authApi, configApi, donorApi, setUserSession } from '../../lib/api.js'
+import { captureLocation } from '../../lib/geo.js'
 
 const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
 
@@ -26,6 +27,11 @@ export default function DonorSignup() {
   const [error, setError] = useState(null)
   const [account, setAccount] = useState(null)
   const [eligibility, setEligibility] = useState(null)
+  // idle | requesting | saved | error — surfaced on the success screen instead
+  // of failing silently, since a donor with no location gets swept into every
+  // ripple regardless of real distance (see dispatch.py's None fallback).
+  const [locStatus, setLocStatus] = useState('idle')
+  const [locError, setLocError] = useState(null)
   const navigate = useNavigate()
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
@@ -71,6 +77,22 @@ export default function DonorSignup() {
     setStep(3)
   }
 
+  /** Best-effort on first call (right after registration); explicit retry on
+   *  a later click. Either way the result — success, denial, or timeout — is
+   *  shown to the donor instead of vanishing into a swallowed `.catch`. */
+  async function requestLocation(donorId) {
+    setLocStatus('requesting')
+    setLocError(null)
+    try {
+      const { lat, lng } = await captureLocation()
+      await donorApi.updateLocation(donorId, lat, lng)
+      setLocStatus('saved')
+    } catch (err) {
+      setLocStatus('error')
+      setLocError(err.message)
+    }
+  }
+
   async function completeRegistration(e) {
     e?.preventDefault()
     if (!healthValid || busy) return
@@ -104,24 +126,13 @@ export default function DonorSignup() {
         await donorApi.saveRoute(res.account.id, segments, 'Daily commute').catch(() => {})
       }
 
-      // Capture GPS coordinates via the browser (free, no Maps key needed)
-      // so this donor is reachable by distance in ripple dispatch. Best
-      // effort — a donor who declines the permission just stays
-      // "location unknown" and dispatch falls back to including them
-      // rather than dropping them (see dispatch.py's conservative default).
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            donorApi
-              .updateLocation(res.account.id, pos.coords.latitude, pos.coords.longitude)
-              .catch(() => {})
-          },
-          () => {},
-          { enableHighAccuracy: true, timeout: 10000 }
-        )
-      }
-
       setStep(4)
+      // Ask for GPS on the success screen instead of here: this call sits
+      // after an `await` (the register request above), and Safari/iOS drops
+      // the "user gesture" that geolocation prompts require once an await has
+      // happened, so the prompt would silently never appear on those devices.
+      // requestLocation() below is wired to a fresh button click instead.
+      requestLocation(res.account.id)
     } catch (err) {
       setError(err.message)
       // A rejected code means starting the verification over.
@@ -311,7 +322,50 @@ export default function DonorSignup() {
                 ))}
               </ul>
             )}
-            <Button className="mt-6 w-full" onClick={() => navigate(account.home)}>
+
+            {/* Without a saved location, ripple dispatch cannot filter by
+                distance for this donor — it keeps them in every radius
+                rather than dropping them (see dispatch.py). So this status
+                is shown plainly, with a retry that's a fresh click (not
+                fired automatically), which is what makes the prompt reliable
+                on Safari/iOS too. */}
+            <div className="mt-4 w-full rounded-lg border border-line bg-[#0d111a] p-3 text-[11px]">
+              {locStatus === 'requesting' && (
+                <p className="flex items-center justify-center gap-2 text-text-faint">
+                  <Loader2 className="size-3.5 animate-spin" /> Requesting your location…
+                </p>
+              )}
+              {locStatus === 'saved' && (
+                <p className="flex items-center justify-center gap-1.5 text-success">
+                  <CheckCircle2 className="size-3.5" /> Location saved — you're reachable by
+                  distance-based ripple dispatch.
+                </p>
+              )}
+              {locStatus === 'error' && (
+                <div className="text-center">
+                  <p className="flex items-center justify-center gap-1.5 text-warning">
+                    <TriangleAlert className="size-3.5" /> {locError}
+                  </p>
+                  <p className="mt-1 text-text-faint">
+                    Without this, you'll still get pinged, but the ripple can't judge distance
+                    for you — you'll be included at every radius stage.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => requestLocation(account.id)}
+                  >
+                    Try again
+                  </Button>
+                </div>
+              )}
+              {locStatus === 'idle' && (
+                <p className="text-center text-text-faint">Waiting on location permission…</p>
+              )}
+            </div>
+
+            <Button className="mt-4 w-full" onClick={() => navigate(account.home)}>
               Go to Donor Dashboard
             </Button>
           </div>
