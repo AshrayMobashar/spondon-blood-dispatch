@@ -225,7 +225,32 @@ async def run_dispatch(
     )
 
     results, pinged_count, zone_tally = [], 0, {}
+
+    # Idempotency: /dispatch/evaluate can legitimately be called again for the
+    # same request (a later ripple stage widening the radius, an admin re-run),
+    # but without this check every re-run re-notifies every eligible donor from
+    # scratch — same push, same SMS, same PingLog row — because decide_ping()
+    # has no memory of previous rounds. One click multiplying into repeat
+    # notifications for the same donor is exactly that gap.
+    already_pinged_ids = {
+        log.donor_id
+        for log in await PingLog.find(
+            PingLog.request_id == str(req.id), PingLog.pinged == True  # noqa: E712
+        ).to_list()
+    }
+
     for acc, km in reachable:
+        if str(acc.id) in already_pinged_ids:
+            results.append({
+                "donor_id": str(acc.id), "donor_name": acc.name,
+                "distance_km": round(km, 2) if km is not None else None,
+                "delivery": None, "sms": None,
+                "decision": "ALREADY_PINGED", "pinged": False,
+                "reason": "Already pinged for this request in an earlier dispatch round — not re-notified.",
+                "fcm_priority": "normal", "fcm_bypass_dnd": False,
+            })
+            continue
+
         d = decide_ping(acc, req, now_hhmm, now=now)
         delivery = sms = None
         if d["pinged"] and send_pushes:
