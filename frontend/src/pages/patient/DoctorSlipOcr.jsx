@@ -50,10 +50,14 @@ const fieldMeta = [
 ]
 
 export default function DoctorSlipOcr() {
-  useSession({ require: false })
+  useSession({ require: true })
 
-  const [requests, setRequests] = useState([])
-  const [selectedId, setSelectedId] = useState('')
+  const [patientName, setPatientName] = useState('')
+  const [hospital, setHospital] = useState('')
+  const [bloodType, setBloodType] = useState('O+')
+  const [component, setComponent] = useState('WHOLE_BLOOD')
+  const [createdReqId, setCreatedReqId] = useState(null)
+
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -63,26 +67,9 @@ export default function DoctorSlipOcr() {
   const [ocrLive, setOcrLive] = useState(null)
   const fileInput = useRef(null)
 
-  const load = useCallback(async () => {
-    try {
-      const all = await requestApi.list()
-      const open = all.filter((r) => r.status === 'OPEN')
-      setRequests(open)
-      setSelectedId((cur) => cur || open[0]?.id || '')
-    } catch (err) {
-      setError(err.message)
-    }
-  }, [])
-
   useEffect(() => {
-    load()
     configApi.get().then((c) => setOcrLive(c.integrations.ocr)).catch(() => {})
-  }, [load])
-
-  const selected = useMemo(
-    () => requests.find((r) => r.id === selectedId) ?? null,
-    [requests, selectedId],
-  )
+  }, [])
 
   async function pickFile(e) {
     const f = e.target.files?.[0]
@@ -99,14 +86,22 @@ export default function DoctorSlipOcr() {
   }
 
   async function scan() {
-    if (!selected || !preview || busy) return
+    if (!patientName || !hospital || !preview || busy) return
     setBusy(true)
     setError(null)
     setDispatchResult(null)
     try {
-      const res = await requestApi.uploadSlip(selected.id, preview, file?.type || 'image/jpeg')
+      const newReq = await requestApi.create({
+        patient_name: patientName,
+        blood_type: bloodType,
+        component,
+        hospital,
+        units_needed: 1,
+        status: 'OPEN',
+      })
+      setCreatedReqId(newReq.id)
+      const res = await requestApi.uploadSlip(newReq.id, preview, file?.type || 'image/jpeg')
       setResult(res)
-      load()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -115,12 +110,11 @@ export default function DoctorSlipOcr() {
   }
 
   async function dispatch() {
-    if (!selected || busy) return
+    if (!createdReqId || busy) return
     setBusy(true)
     setError(null)
     try {
-      setDispatchResult(await requestApi.dispatch(selected.id))
-      load()
+      setDispatchResult(await requestApi.dispatch(createdReqId))
     } catch (err) {
       setError(err.message)
     } finally {
@@ -134,13 +128,16 @@ export default function DoctorSlipOcr() {
     setResult(null)
     setDispatchResult(null)
     setError(null)
+    setCreatedReqId(null)
+    setPatientName('')
+    setHospital('')
     if (fileInput.current) fileInput.current.value = ''
   }
 
-  const status = result?.slip_status ?? selected?.slip_status ?? 'PENDING'
+  const status = result?.slip_status ?? 'PENDING'
   const meta = STATUS_META[status] ?? STATUS_META.PENDING
   const tone = TONE[meta.color]
-  const confidence = result?.ocr_confidence ?? selected?.ocr_confidence ?? null
+  const confidence = result?.ocr_confidence ?? null
   const authorised = status === 'OCR_CONFIRMED' || status === 'VERIFIED'
 
   return (
@@ -183,19 +180,63 @@ export default function DoctorSlipOcr() {
               </div>
             </div>
 
-            <label className="mt-5 block">
-              <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-                Attach to request
-              </span>
-              <Select value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
-                {requests.length === 0 && <option value="">No open requests</option>}
-                {requests.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.patient_name} · {r.blood_type} · {r.hospital}
-                  </option>
-                ))}
-              </Select>
-            </label>
+            <div className="mt-5 space-y-4">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                  Patient Name
+                </span>
+                <input
+                  type="text"
+                  value={patientName}
+                  onChange={(e) => setPatientName(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-surface/50 px-3 py-2 text-sm focus:border-primary focus:outline-none disabled:opacity-50"
+                  placeholder="e.g. Farzana Islam"
+                  disabled={!!createdReqId}
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                  Hospital
+                </span>
+                <input
+                  type="text"
+                  value={hospital}
+                  onChange={(e) => setHospital(e.target.value)}
+                  className="w-full rounded-lg border border-line bg-surface/50 px-3 py-2 text-sm focus:border-primary focus:outline-none disabled:opacity-50"
+                  placeholder="e.g. Square Hospital"
+                  disabled={!!createdReqId}
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-4">
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                    Blood Type
+                  </span>
+                  <Select value={bloodType} onChange={(e) => setBloodType(e.target.value)} disabled={!!createdReqId}>
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                  </Select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                    Component
+                  </span>
+                  <Select value={component} onChange={(e) => setComponent(e.target.value)} disabled={!!createdReqId}>
+                    <option value="WHOLE_BLOOD">Whole Blood</option>
+                    <option value="PLATELETS">Platelets</option>
+                    <option value="PLASMA">Plasma</option>
+                  </Select>
+                </label>
+              </div>
+            </div>
 
             {/* Slip preview */}
             <div className="relative mt-4 aspect-[4/5] overflow-hidden rounded-xl border border-dashed border-line bg-[#0d111a]">
@@ -245,11 +286,11 @@ export default function DoctorSlipOcr() {
                   <RotateCcw className="size-4" /> Scan another slip
                 </Button>
               ) : (
-                <Button onClick={scan} disabled={!preview || !selected || busy} className="w-full">
+                <Button onClick={scan} disabled={!preview || !patientName || !hospital || busy || !!createdReqId} className="w-full">
                   {busy ? (
                     <><Loader2 className="size-4 animate-spin" /> Scanning…</>
                   ) : (
-                    <><Upload className="size-4" /> Upload &amp; Scan Slip</>
+                    <><Upload className="size-4" /> Create Request &amp; Scan</>
                   )}
                 </Button>
               )}
@@ -300,7 +341,7 @@ export default function DoctorSlipOcr() {
                   Upload a requisition slip on the left and the parsed request details will appear
                   here.
                 </p>
-                {selected && (
+                {createdReqId && (
                   <p className="mt-4 text-[11px] text-text-faint">
                     Current status for this request:{' '}
                     <span className={`font-semibold ${tone.text}`}>{status}</span>

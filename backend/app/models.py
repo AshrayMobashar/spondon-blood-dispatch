@@ -191,6 +191,7 @@ class BloodRequest(Document):
     ocr_notes: Optional[str] = None
     ocr_simulated: Optional[bool] = None   # True when no OCR engine was configured
     slip_image: Optional[str] = None       # data: URI of the uploaded slip
+    slip_image_hash: Optional[str] = None  # SHA-256 hash for exact-duplicate prevention
     slip_reviewed_by: Optional[str] = None
     slip_reviewed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)

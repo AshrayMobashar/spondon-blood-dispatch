@@ -7,7 +7,9 @@ admin.
 """
 import base64
 import binascii
-from datetime import timedelta
+import hashlib
+from datetime import timedelta, datetime
+from difflib import SequenceMatcher
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -111,9 +113,24 @@ async def upload_slip(request_id: str, body: SlipUpload):
     except (binascii.Error, ValueError):
         raise HTTPException(status_code=400, detail="image must be base64 or a data: URI")
 
+    image_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    existing = await BloodRequest.find_one(BloodRequest.slip_image_hash == image_hash)
+    if existing and existing.id != req.id:
+        req.slip_status = "REJECTED"
+        req.slip_image_hash = image_hash
+        req.slip_image = f"data:{mime};base64,{raw}"
+        await req.save()
+        return {
+            "request_id": str(req.id),
+            "slip_status": "REJECTED",
+            "message": "Duplicate slip detected. This exact image has already been uploaded for another request.",
+            "dispatch_authorised": False
+        }
+
     result = await integrations.read_slip(raw, mime, req.component)
 
     req.slip_image = f"data:{mime};base64,{raw}"
+    req.slip_image_hash = image_hash
     req.ocr_confidence = result.get("confidence")
     req.ocr_notes = result.get("notes") or result.get("error")
     req.ocr_simulated = bool(result.get("simulated"))
@@ -122,14 +139,40 @@ async def upload_slip(request_id: str, body: SlipUpload):
 
     confidence = result.get("confidence")
     component = (result.get("component") or "").upper()
+    date_written_str = result.get("date_written")
+    has_stamp = result.get("has_stamp_or_signature")
+    ocr_patient_name = result.get("patient_name") or ""
+
+    is_expired = False
+    if date_written_str:
+        try:
+            # handle ISO format date
+            dt = datetime.fromisoformat(date_written_str.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=utcnow().tzinfo)
+            if (utcnow() - dt).total_seconds() > 48 * 3600:
+                is_expired = True
+        except ValueError:
+            pass
+
+    name_match_ratio = SequenceMatcher(None, req.patient_name.lower(), ocr_patient_name.lower()).ratio()
 
     if result.get("is_medical_slip") is False:
         # Schema mismatch — halt rather than score it as a bad slip.
         req.slip_status = "REJECTED"
         message = "That does not look like a laboratory requisition slip. Please upload a clear photo of the doctor's slip."
+    elif is_expired:
+        req.slip_status = "NEEDS_REVIEW"
+        message = "The date on the slip indicates it is older than 48 hours — sent for human review."
+    elif not has_stamp and not req.ocr_simulated:
+        req.slip_status = "NEEDS_REVIEW"
+        message = "Could not detect an official hospital stamp or doctor's signature — sent for human review."
     elif confidence is None or confidence < config.OCR_CONFIDENCE_THRESHOLD:
         req.slip_status = "NEEDS_REVIEW"
         message = "Handwriting could not be read confidently — a human reviewer will verify it shortly."
+    elif name_match_ratio < 0.6 and not req.ocr_simulated:
+        req.slip_status = "NEEDS_REVIEW"
+        message = f"The patient name on the slip ({ocr_patient_name}) does not match the request ({req.patient_name}) — sent for human review."
     elif component and component != req.component.upper():
         req.slip_status = "NEEDS_REVIEW"
         message = (
@@ -139,6 +182,12 @@ async def upload_slip(request_id: str, body: SlipUpload):
     else:
         req.slip_status = "OCR_CONFIRMED"
         message = "Slip verified — dispatch authorised."
+
+    if req.slip_status in ("NEEDS_REVIEW", "REJECTED"):
+        if req.ocr_notes:
+            req.ocr_notes = f"{message} (OCR: {req.ocr_notes})"
+        else:
+            req.ocr_notes = message
 
     await req.save()
     return {
