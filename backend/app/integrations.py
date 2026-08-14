@@ -204,7 +204,8 @@ _OCR_SYSTEM = (
     "Reply with strict JSON only, no prose, matching this schema: "
     '{"is_medical_slip": bool, "patient_name": string|null, "hospital": string|null, '
     '"blood_type": string|null, "component": "WHOLE_BLOOD"|"PLATELETS"|"PLASMA"|null, '
-    '"units": number|null, "confidence": number between 0 and 1, "notes": string}. '
+    '"units": number|null, "date_written": string|null (ISO 8601), '
+    '"has_stamp_or_signature": bool, "confidence": number between 0 and 1, "notes": string}. '
     "Set is_medical_slip false for anything that is not a medical requisition. "
     "confidence must reflect how legible the handwriting actually is."
 )
@@ -276,6 +277,8 @@ async def read_slip(image_b64: str, mime: str, expected_component: Optional[str]
         "blood_type": parsed.get("blood_type"),
         "component": parsed.get("component"),
         "units": parsed.get("units"),
+        "date_written": parsed.get("date_written"),
+        "has_stamp_or_signature": parsed.get("has_stamp_or_signature"),
         "confidence": float(conf) if conf is not None else None,
         "notes": parsed.get("notes") or "",
         "simulated": False,
