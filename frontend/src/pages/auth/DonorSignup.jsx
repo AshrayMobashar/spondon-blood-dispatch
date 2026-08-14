@@ -103,6 +103,24 @@ export default function DonorSignup() {
       if (segments.length) {
         await donorApi.saveRoute(res.account.id, segments, 'Daily commute').catch(() => {})
       }
+
+      // Capture GPS coordinates via the browser (free, no Maps key needed)
+      // so this donor is reachable by distance in ripple dispatch. Best
+      // effort — a donor who declines the permission just stays
+      // "location unknown" and dispatch falls back to including them
+      // rather than dropping them (see dispatch.py's conservative default).
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            donorApi
+              .updateLocation(res.account.id, pos.coords.latitude, pos.coords.longitude)
+              .catch(() => {})
+          },
+          () => {},
+          { enableHighAccuracy: true, timeout: 10000 }
+        )
+      }
+
       setStep(4)
     } catch (err) {
       setError(err.message)
