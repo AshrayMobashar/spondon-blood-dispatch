@@ -21,6 +21,7 @@ ZONES: list[tuple[str, float, float]] = [
     ("Mirpur", 23.8069, 90.3687),
     ("Gulshan", 23.7925, 90.4078),
     ("Banani", 23.7936, 90.4043),
+    ("Badda", 23.7805, 90.4267),
     ("Mohammadpur", 23.7590, 90.3580),
     ("Dhanmondi", 23.7461, 90.3742),
     ("Tejgaon", 23.7639, 90.3925),

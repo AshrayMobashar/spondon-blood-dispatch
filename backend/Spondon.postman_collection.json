@@ -5,30 +5,12 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    {
-      "key": "baseUrl",
-      "value": "http://localhost:1184"
-    },
-    {
-      "key": "donor_id",
-      "value": ""
-    },
-    {
-      "key": "donor2_id",
-      "value": ""
-    },
-    {
-      "key": "request_id",
-      "value": ""
-    },
-    {
-      "key": "request2_id",
-      "value": ""
-    },
-    {
-      "key": "appeal_id",
-      "value": ""
-    }
+    { "key": "baseUrl", "value": "http://localhost:1184" },
+    { "key": "donor_id", "value": "" },
+    { "key": "donor2_id", "value": "" },
+    { "key": "request_id", "value": "" },
+    { "key": "request2_id", "value": "" },
+    { "key": "appeal_id", "value": "" }
   ],
   "item": [
     {
@@ -37,76 +19,30 @@
         {
           "name": "Create donor (Rafiul, sleeps w/ emergency override)",
           "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set('donor_id', pm.response.json().id);",
-                  "pm.test('201 created', () => pm.response.code === 201);"
-                ]
-              }
-            }
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.collectionVariables.set('donor_id', pm.response.json().id);",
+              "pm.test('201 created', () => pm.response.code === 201);"
+            ] } }
           ],
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Rafiul Islam\",\n  \"blood_type\": \"O+\",\n  \"fcm_token\": \"fcm_rafiul_9f21\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/donors",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Rafiul Islam\",\n  \"blood_type\": \"O+\",\n  \"fcm_token\": \"fcm_rafiul_9f21\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/donors", "host": ["{{baseUrl}}"], "path": ["api", "donors"] }
           }
         },
         {
           "name": "Create donor (Nadia, commuter)",
           "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set('donor2_id', pm.response.json().id);"
-                ]
-              }
-            }
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.collectionVariables.set('donor2_id', pm.response.json().id);"
+            ] } }
           ],
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Nadia Akter\",\n  \"blood_type\": \"O+\",\n  \"fcm_token\": \"fcm_nadia_3b70\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/donors",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Nadia Akter\",\n  \"blood_type\": \"O+\",\n  \"fcm_token\": \"fcm_nadia_3b70\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/donors", "host": ["{{baseUrl}}"], "path": ["api", "donors"] }
           }
         },
         {
@@ -114,16 +50,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/donors",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors"
-              ]
-            }
+            "url": { "raw": "{{baseUrl}}/api/donors", "host": ["{{baseUrl}}"], "path": ["api", "donors"] }
           }
         },
         {
@@ -131,45 +58,16 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor_id}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor_id}}"
-              ]
-            }
+            "url": { "raw": "{{baseUrl}}/api/donors/{{donor_id}}", "host": ["{{baseUrl}}"], "path": ["api", "donors", "{{donor_id}}"] }
           }
         },
         {
           "name": "Update sleep mode (Rafiul: override + DND on)",
           "request": {
             "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"enabled\": true,\n  \"start\": \"23:00\",\n  \"end\": \"07:00\",\n  \"allow_extreme_emergencies\": true,\n  \"dnd_on\": true\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor_id}}/sleep-mode",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor_id}}",
-                "sleep-mode"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"enabled\": true,\n  \"start\": \"23:00\",\n  \"end\": \"07:00\",\n  \"allow_extreme_emergencies\": true,\n  \"dnd_on\": true\n}" },
+            "url": { "raw": "{{baseUrl}}/api/donors/{{donor_id}}/sleep-mode", "host": ["{{baseUrl}}"], "path": ["api", "donors", "{{donor_id}}", "sleep-mode"] }
           }
         },
         {
@@ -177,268 +75,66 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor_id}}/sleep-mode",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor_id}}",
-                "sleep-mode"
-              ]
-            }
+            "url": { "raw": "{{baseUrl}}/api/donors/{{donor_id}}/sleep-mode", "host": ["{{baseUrl}}"], "path": ["api", "donors", "{{donor_id}}", "sleep-mode"] }
           }
         },
         {
           "name": "Update sleep mode (Nadia: no override)",
           "request": {
             "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"enabled\": true,\n  \"start\": \"23:00\",\n  \"end\": \"07:00\",\n  \"allow_extreme_emergencies\": false,\n  \"dnd_on\": false\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/sleep-mode",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor2_id}}",
-                "sleep-mode"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"enabled\": true,\n  \"start\": \"23:00\",\n  \"end\": \"07:00\",\n  \"allow_extreme_emergencies\": false,\n  \"dnd_on\": false\n}" },
+            "url": { "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/sleep-mode", "host": ["{{baseUrl}}"], "path": ["api", "donors", "{{donor2_id}}", "sleep-mode"] }
           }
         },
         {
           "name": "Save commute route (Nadia)",
           "request": {
             "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"segments\": [\"Mirpur-Rd\", \"Kazipara\", \"Shewrapara\"],\n  \"label\": \"Home to Office\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/commute-route",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor2_id}}",
-                "commute-route"
-              ]
-            }
-          }
-        },
-        {
-          "name": "Get commute route (Nadia)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/commute-route",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor2_id}}",
-                "commute-route"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"segments\": [\"Mirpur-Rd\", \"Kazipara\", \"Shewrapara\"],\n  \"label\": \"Home to Office\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/commute-route", "host": ["{{baseUrl}}"], "path": ["api", "donors", "{{donor2_id}}", "commute-route"] }
           }
         },
         {
           "name": "Update live location (Nadia on Kazipara)",
           "request": {
             "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"lat\": 23.8069,\n  \"lng\": 90.3687,\n  \"road_segment\": \"Kazipara\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/location",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor2_id}}",
-                "location"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": 23.8069,\n  \"lng\": 90.3687,\n  \"road_segment\": \"Kazipara\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/location", "host": ["{{baseUrl}}"], "path": ["api", "donors", "{{donor2_id}}", "location"] }
           }
         },
         {
           "name": "Create request (LIFE_THREATENING on Kazipara)",
           "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set('request_id', pm.response.json().id);"
-                ]
-              }
-            }
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.collectionVariables.set('request_id', pm.response.json().id);"
+            ] } }
           ],
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"patient_name\": \"Mehedi Hassan\",\n  \"hospital\": \"Dhaka Medical College\",\n  \"blood_type\": \"O+\",\n  \"severity\": \"LIFE_THREATENING\",\n  \"road_segment\": \"Kazipara\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/requests",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "requests"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"patient_name\": \"Mehedi Hassan\",\n  \"hospital\": \"Dhaka Medical College\",\n  \"blood_type\": \"O+\",\n  \"severity\": \"LIFE_THREATENING\",\n  \"road_segment\": \"Kazipara\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/requests", "host": ["{{baseUrl}}"], "path": ["api", "requests"] }
           }
         },
         {
           "name": "Evaluate dispatch @ 23:30 (breakthrough vs skip)",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"now\": \"23:30\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/dispatch/evaluate",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "dispatch",
-                "evaluate"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"now\": \"23:30\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/dispatch/evaluate", "host": ["{{baseUrl}}"], "path": ["api", "dispatch", "evaluate"] }
           }
         },
         {
           "name": "Evaluate dispatch @ 14:00 (route match)",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"now\": \"14:00\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/dispatch/evaluate",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "dispatch",
-                "evaluate"
-              ]
-            }
-          }
-        },
-        {
-          "name": "Ping preview @ 02:00 (breakthrough, Rafiul)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"now\": \"02:00\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor_id}}/ping-preview",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor_id}}",
-                "ping-preview"
-              ]
-            }
-          }
-        },
-        {
-          "name": "Ping preview @ 14:00 (route match, Nadia)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"now\": \"14:00\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/ping-preview",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor2_id}}",
-                "ping-preview"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"now\": \"14:00\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/dispatch/evaluate", "host": ["{{baseUrl}}"], "path": ["api", "dispatch", "evaluate"] }
           }
         },
         {
@@ -446,41 +142,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/ping-logs?request_id={{request_id}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "ping-logs"
-              ],
-              "query": [
-                {
-                  "key": "request_id",
-                  "value": "{{request_id}}"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "name": "Clear live location (Nadia goes offline)",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/location",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor2_id}}",
-                "location"
-              ]
-            }
+            "url": { "raw": "{{baseUrl}}/api/ping-logs?request_id={{request_id}}", "host": ["{{baseUrl}}"], "path": ["api", "ping-logs"], "query": [ { "key": "request_id", "value": "{{request_id}}" } ] }
           }
         },
         {
@@ -488,18 +150,7 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/commute-route",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor2_id}}",
-                "commute-route"
-              ]
-            }
+            "url": { "raw": "{{baseUrl}}/api/donors/{{donor2_id}}/commute-route", "host": ["{{baseUrl}}"], "path": ["api", "donors", "{{donor2_id}}", "commute-route"] }
           }
         }
       ]
@@ -510,94 +161,33 @@
         {
           "name": "Create request (to accept)",
           "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set('request2_id', pm.response.json().id);"
-                ]
-              }
-            }
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.collectionVariables.set('request2_id', pm.response.json().id);"
+            ] } }
           ],
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"patient_name\": \"Karim Uddin\",\n  \"hospital\": \"Square Hospital\",\n  \"blood_type\": \"O+\",\n  \"severity\": \"CRITICAL\",\n  \"road_segment\": \"Panthapath\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/requests",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "requests"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"patient_name\": \"Karim Uddin\",\n  \"hospital\": \"Square Hospital\",\n  \"blood_type\": \"O+\",\n  \"severity\": \"CRITICAL\",\n  \"road_segment\": \"Panthapath\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/requests", "host": ["{{baseUrl}}"], "path": ["api", "requests"] }
           }
         },
         {
           "name": "Accept request (WINNER — 200 Donor Secured)",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"donor_id\": \"{{donor_id}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/requests/{{request2_id}}/accept",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "requests",
-                "{{request2_id}}",
-                "accept"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"donor_id\": \"{{donor_id}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/requests/{{request2_id}}/accept", "host": ["{{baseUrl}}"], "path": ["api", "requests", "{{request2_id}}", "accept"] }
           }
         },
         {
           "name": "Accept request again (RUNNER-UP — 409 Donor Secured)",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"donor_id\": \"{{donor2_id}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/requests/{{request2_id}}/accept",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "requests",
-                "{{request2_id}}",
-                "accept"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"donor_id\": \"{{donor2_id}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/requests/{{request2_id}}/accept", "host": ["{{baseUrl}}"], "path": ["api", "requests", "{{request2_id}}", "accept"] }
           }
         },
         {
@@ -605,17 +195,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/requests/{{request2_id}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "requests",
-                "{{request2_id}}"
-              ]
-            }
+            "url": { "raw": "{{baseUrl}}/api/requests/{{request2_id}}", "host": ["{{baseUrl}}"], "path": ["api", "requests", "{{request2_id}}"] }
           }
         },
         {
@@ -623,44 +203,16 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/requests",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "requests"
-              ]
-            }
+            "url": { "raw": "{{baseUrl}}/api/requests", "host": ["{{baseUrl}}"], "path": ["api", "requests"] }
           }
         },
         {
           "name": "Record no-show (winner fails to show)",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"donor_id\": \"{{donor_id}}\",\n  \"showed_up\": false\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/requests/{{request2_id}}/arrival",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "requests",
-                "{{request2_id}}",
-                "arrival"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"donor_id\": \"{{donor_id}}\",\n  \"showed_up\": false\n}" },
+            "url": { "raw": "{{baseUrl}}/api/requests/{{request2_id}}/arrival", "host": ["{{baseUrl}}"], "path": ["api", "requests", "{{request2_id}}", "arrival"] }
           }
         },
         {
@@ -668,83 +220,30 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/donors/{{donor_id}}/reliability",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "donors",
-                "{{donor_id}}",
-                "reliability"
-              ]
-            }
+            "url": { "raw": "{{baseUrl}}/api/donors/{{donor_id}}/reliability", "host": ["{{baseUrl}}"], "path": ["api", "donors", "{{donor_id}}", "reliability"] }
           }
         },
         {
           "name": "File appeal (genuine accident)",
           "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.collectionVariables.set('appeal_id', pm.response.json().id);"
-                ]
-              }
-            }
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.collectionVariables.set('appeal_id', pm.response.json().id);"
+            ] } }
           ],
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"donor_id\": \"{{donor_id}}\",\n  \"request_id\": \"{{request2_id}}\",\n  \"reason\": \"Road accident on the way — hospital records attached.\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/appeals",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "appeals"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"donor_id\": \"{{donor_id}}\",\n  \"request_id\": \"{{request2_id}}\",\n  \"reason\": \"Road accident on the way — hospital records attached.\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/appeals", "host": ["{{baseUrl}}"], "path": ["api", "appeals"] }
           }
         },
         {
           "name": "Resolve appeal (admin CLEAR)",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"action\": \"CLEAR\",\n  \"admin\": \"admin.sadia\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/appeals/{{appeal_id}}/resolve",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "appeals",
-                "{{appeal_id}}",
-                "resolve"
-              ]
-            }
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"CLEAR\",\n  \"admin\": \"admin.sadia\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/appeals/{{appeal_id}}/resolve", "host": ["{{baseUrl}}"], "path": ["api", "appeals", "{{appeal_id}}", "resolve"] }
           }
         }
       ]

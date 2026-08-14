@@ -131,76 +131,6 @@ async def _distances(req: BloodRequest, donors: list) -> dict:
     return out
 
 
-# ── Single-donor dry run (no DB writes, no pushes) ───────────────────
-def evaluate_donor(
-    donor: Account, req: BloodRequest, *, now: Optional[datetime] = None,
-    now_hhmm: Optional[str] = None,
-) -> dict:
-    """Would *this* donor be pinged for *this* request right now, and why?
-
-    Walks the same four stages as `run_dispatch` — gate, pool, reach, decision —
-    using the identical helpers, but for one donor and with no side effects: it
-    writes no PingLog, sends no push, and mutates nothing. It powers the
-    `ping-preview` endpoint, which lets a donor see the concrete effect of their
-    own Sleep-Mode and commute settings ("a life-threatening request at 2 a.m.
-    *would* wake you") without a real emergency being dispatched.
-    """
-    now = now or utcnow()
-    now_hhmm = now_hhmm or local_hhmm(now)
-    recalculate(donor, now=now)             # in-memory only; caller decides to save
-
-    mode = triage(req)
-    rare = mode == CITYWIDE_RARE
-    radius = None if rare else ripple_radius_km(req, now)
-
-    result = {
-        "request_id": str(req.id),
-        "donor_id": str(donor.id),
-        "donor_name": donor.name,
-        "evaluated_at": now_hhmm,
-        "dispatch_mode": mode,
-        "rare_blood_override": rare,
-        "radius_km": radius,
-        "would_ping": False,
-    }
-
-    # 1) Gate — is the request allowed to reach the network at all?
-    blocked = dispatch_block_reason(req)
-    if blocked:
-        return {**result, "stage": "GATE", "decision": "BLOCKED", "reason": blocked}
-
-    # 2) Pool — is this account dispatchable for this request?
-    ok, why = is_dispatchable(donor, req)
-    if not ok:
-        return {**result, "stage": "POOL", "decision": "EXCLUDED", "reason": why}
-
-    # 3) Reach — rare goes city-wide; otherwise inside the ripple OR on-route.
-    distance_km = None
-    on_route = on_route_now(donor, req, now=now)
-    if not rare:
-        loc, hosp = donor.current_location, req.hospital_location
-        if loc is not None and hosp is not None:
-            distance_km = integrations.haversine_km(hosp.lat, hosp.lng, loc.lat, loc.lng)
-        in_radius = distance_km is not None and distance_km <= radius
-        # Unknown position is kept in (matches run_dispatch), so only a known,
-        # too-far fix that is also off-route is out of range.
-        if distance_km is not None and not in_radius and not on_route:
-            return {
-                **result, "stage": "REACH", "decision": "OUT_OF_RANGE",
-                "distance_km": round(distance_km, 2), "on_route": on_route,
-                "reason": (
-                    f"{round(distance_km, 2)} km from the hospital, beyond the "
-                    f"{radius} km radius, and not on the request's road segment."
-                ),
-            }
-    result["distance_km"] = round(distance_km, 2) if distance_km is not None else None
-    result["on_route"] = on_route
-
-    # 4) Decision — Sleep Mode / commute preference.
-    d = decide_ping(donor, req, now_hhmm, now=now)
-    return {**result, "stage": "DECISION", "would_ping": d["pinged"], **d}
-
-
 # ── The pipeline ─────────────────────────────────────────────────────
 async def run_dispatch(
     req: BloodRequest,
@@ -295,32 +225,7 @@ async def run_dispatch(
     )
 
     results, pinged_count, zone_tally = [], 0, {}
-
-    # Idempotency: /dispatch/evaluate can legitimately be called again for the
-    # same request (a later ripple stage widening the radius, an admin re-run),
-    # but without this check every re-run re-notifies every eligible donor from
-    # scratch — same push, same SMS, same PingLog row — because decide_ping()
-    # has no memory of previous rounds. One click multiplying into repeat
-    # notifications for the same donor is exactly that gap.
-    already_pinged_ids = {
-        log.donor_id
-        for log in await PingLog.find(
-            PingLog.request_id == str(req.id), PingLog.pinged == True  # noqa: E712
-        ).to_list()
-    }
-
     for acc, km in reachable:
-        if str(acc.id) in already_pinged_ids:
-            results.append({
-                "donor_id": str(acc.id), "donor_name": acc.name,
-                "distance_km": round(km, 2) if km is not None else None,
-                "delivery": None, "sms": None,
-                "decision": "ALREADY_PINGED", "pinged": False,
-                "reason": "Already pinged for this request in an earlier dispatch round — not re-notified.",
-                "fcm_priority": "normal", "fcm_bypass_dnd": False,
-            })
-            continue
-
         d = decide_ping(acc, req, now_hhmm, now=now)
         delivery = sms = None
         if d["pinged"] and send_pushes:

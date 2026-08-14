@@ -164,11 +164,6 @@ async def update_sleep_mode(donor_id: str, body: SleepModeUpdate):
 { "segments": ["Mirpur-Rd", "Kazipara", "Shewrapara"], "label": "Home to Office", "enabled": true }
 ```
 
-`points` is optional: when the donor draws their route on the Leaflet map the
-client also sends `[{ "lat": 23.806, "lng": 90.368, "name": "Kazipara" }, …]` so
-the line can be redrawn later. The **names** are still the only thing the engine
-matches on — `points` are display coordinates, nothing more.
-
 ```python
 @router.put("/donors/{donor_id}/commute-route")
 async def save_route(donor_id: str, body: RouteUpdate):
@@ -179,29 +174,6 @@ async def save_route(donor_id: str, body: RouteUpdate):
     await donor.save()
     return {"donor_id": str(donor.id), "message": "Commute route saved",
             "commute_route": donor.commute_route.model_dump(mode="json")}
-```
-
-Segment names are trimmed and de-duplicated on save (casing preserved for display),
-and an all-blank list is rejected `422`. Matching against a request's road segment is
-**case- and whitespace-insensitive**, so `"mirpur road"` still matches `"Mirpur Road"`.
-
----
-
-## 1.6a Get commute route
-
-Read the saved route back on its own — symmetry with 1.4 (get sleep-mode).
-
-| | |
-|---|---|
-| **URL** | `GET http://localhost:1184/api/donors/{donor_id}/commute-route` |
-| **Params** | Path: `donor_id` |
-
-```python
-@router.get("/donors/{donor_id}/commute-route")
-async def get_route(donor_id: str):
-    donor = await _get_donor(donor_id)
-    return {"donor_id": str(donor.id),
-            "commute_route": donor.commute_route.model_dump(mode="json") if donor.commute_route else None}
 ```
 
 ---
@@ -274,64 +246,6 @@ async def update_location(donor_id: str, body: LocationUpdate):
 
 ---
 
-## 1.8b Clear live GPS location (go offline)
-
-Drop the last known fix — the donor revoked location or the app backgrounded. With no
-fresh position the proactive route ping correctly stops firing (the "never for a location
-they have left" corner case, reached deliberately).
-
-| | |
-|---|---|
-| **URL** | `DELETE http://localhost:1184/api/donors/{donor_id}/location` |
-| **Params** | Path: `donor_id` |
-
-```python
-@router.delete("/donors/{donor_id}/location")
-async def clear_location(donor_id: str):
-    donor = await _get_donor(donor_id)
-    donor.current_location = None
-    await donor.save()
-    return {"donor_id": str(donor.id), "message": "Live location cleared"}
-```
-
----
-
-## 1.8c Nearby pings (commute map data)  ⭐ map
-
-Everything the donor's Leaflet map renders in one call: their saved route, their
-live fix, and every **OPEN, broadcasting** request that carries a hospital
-location — each tagged with the flags the map colours by.
-
-| | |
-|---|---|
-| **URL** | `GET http://localhost:1184/api/donors/{donor_id}/nearby-pings` |
-| **Params** | Path: `donor_id` |
-
-**Response (shape)**
-```json
-{
-  "donor_id": "…", "blood_type": "B+",
-  "current_location": { "lat": 23.806, "lng": 90.368, "road_segment": "Kazipara" },
-  "commute_route": { "segments": ["Kazipara"], "points": [{ "lat": 23.806, "lng": 90.368, "name": "Kazipara" }], "enabled": true },
-  "pings": [
-    {
-      "request_id": "…", "hospital": "Dhaka Medical College", "blood_type": "B+",
-      "severity": "LIFE_THREATENING", "road_segment": "Kazipara",
-      "lat": 23.7261, "lng": 90.3969,
-      "blood_type_match": true, "on_saved_route": true, "on_route_now": true,
-      "distance_km": 9.36
-    }
-  ]
-}
-```
-
-`on_route_now` (live GPS on a saved segment right now) is the zero-extra-travel
-case the map paints red; `on_saved_route` is indigo; a plain blood-type match is
-the donor's own type colour. A shadow-muted request (`broadcast=false`) never
-appears here — the same gate that keeps it out of dispatch keeps it off the map.
-
----
-
 ## 1.9 Evaluate dispatch  ⭐ core engine
 
 Decides, for every blood-type-matching donor, whether to ping — applying the Sleep Mode
@@ -381,12 +295,11 @@ def decide_ping(donor, req, now_hhmm):
             return {"decision": "EMERGENCY_BREAKTHROUGH", "pinged": True,
                     "fcm_priority": "high", "fcm_bypass_dnd": bypass, "reason": ...}
         return {"decision": "SKIPPED_SLEEP", "pinged": False, ...}
-    # The commute route is an UPGRADE, never a filter: on the segment now -> a
-    # high-priority proactive ping; off it (or a stale fix) -> simply fall
-    # through to the standard ping. A saved route never makes a donor LESS
-    # reachable than saving none.
-    if route_is_saved_for(donor, req) and on_route_now(donor, req):
-        return {"decision": "ROUTE_MATCH", "pinged": True, "fcm_priority": "high", ...}
+    if donor.commute_route and req.road_segment in donor.commute_route.segments:
+        on_now = donor.current_location and donor.current_location.road_segment == req.road_segment
+        if on_now:
+            return {"decision": "ROUTE_MATCH", "pinged": True, ...}
+        return {"decision": "SKIPPED_OFF_ROUTE", "pinged": False, ...}  # already left the road
     return {"decision": "PINGED", "pinged": True, ...}
 ```
 
@@ -405,51 +318,6 @@ def decide_ping(donor, req, now_hhmm):
   ]
 }
 ```
-
----
-
-## 1.9b Ping preview (per-donor dry run)
-
-Answers **"would THIS donor be pinged for this request right now, and why?"** — walking the
-same four stages as 1.9 (gate → pool → reach → decision) for one donor, with **no side
-effects**: no PingLog written, no push sent, nobody dispatched. This is what a donor's
-settings screen calls to show the concrete effect of their own Sleep-Mode / commute
-choices before a real emergency ever tests them.
-
-| | |
-|---|---|
-| **URL** | `POST http://localhost:1184/api/donors/{donor_id}/ping-preview` |
-| **Headers** | `Content-Type: application/json` |
-
-**Body** — `now` (`HH:MM`, optional) previews the sleep window deterministically.
-```json
-{ "request_id": "6a59ca06f7d34e35aee72fa0", "now": "02:00" }
-```
-
-```python
-@router.post("/donors/{donor_id}/ping-preview")
-async def ping_preview(donor_id: str, body: PingPreview):
-    donor = await _get_donor(donor_id)
-    req = await BloodRequest.get(to_oid(body.request_id))
-    if not req:
-        raise HTTPException(404, "Blood request not found")
-    return evaluate_donor(donor, req, now_hhmm=body.now)   # dispatch.py — no writes
-```
-
-**Sample response `200`** (life-threatening request at 02:00, emergency box + phone DND on)
-```json
-{
-  "request_id": "6a59ca06f7d34e35aee72fa0", "donor_id": "…", "donor_name": "Rafiul Islam",
-  "evaluated_at": "02:00", "dispatch_mode": "RIPPLE", "radius_km": 3.0,
-  "stage": "DECISION", "would_ping": true, "decision": "EMERGENCY_BREAKTHROUGH",
-  "distance_km": 0.32, "on_route": false, "fcm_priority": "high", "fcm_bypass_dnd": true,
-  "reason": "Life-threatening request broke through Sleep Mode … Phone DND is ON -> high-priority FCM flagged to bypass silent mode."
-}
-```
-
-`stage` names where a non-ping stopped: `GATE` (request withheld), `POOL` (not
-dispatchable — wrong type / banned / ineligible), `REACH` (`OUT_OF_RANGE`), or `DECISION`
-(Sleep-Mode / route outcome).
 
 ---
 
@@ -748,14 +616,10 @@ async def resolve_appeal(appeal_id: str, body: AppealResolve):
 | 1.4 | GET | `/api/donors/{id}/sleep-mode` |
 | 1.5 | PUT | `/api/donors/{id}/sleep-mode` |
 | 1.6 | PUT | `/api/donors/{id}/commute-route` |
-| 1.6a | GET | `/api/donors/{id}/commute-route` |
 | 1.6b | POST | `/api/donors/{id}/commute-route/toggle?enabled=` |
 | 1.7 | DELETE | `/api/donors/{id}/commute-route` |
 | 1.8 | PUT | `/api/donors/{id}/location` |
-| 1.8b | DELETE | `/api/donors/{id}/location` |
-| 1.8c | GET | `/api/donors/{id}/nearby-pings` |
 | 1.9 | POST | `/api/dispatch/evaluate` |
-| 1.9b | POST | `/api/donors/{id}/ping-preview` |
 | 1.10 | GET | `/api/ping-logs` |
 
 ### Feature 2 — Concurrency & Accountability

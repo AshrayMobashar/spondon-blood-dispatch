@@ -2,14 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ClipboardEdit, Moon, Navigation, BellOff, CheckCircle2, Sparkles,
-  TriangleAlert, Loader2, MapPin,
+  TriangleAlert, Loader2,
 } from 'lucide-react'
 import Shell from '../../components/Shell.jsx'
 import { DonorChips } from '../../components/RoleChips.jsx'
 import { Card, Tabs, Toggle, Button, Field, Input, Select } from '../../components/ui.jsx'
 import { configApi, donorApi } from '../../lib/api.js'
 import { useSession } from '../../lib/session.js'
-import { captureLocation } from '../../lib/geo.js'
 
 const tabs = ['Update Records', 'Weight Validation', 'Ping Activity']
 const tabRoutes = ['/donor/records', '/donor/weight', '/admin/pings']
@@ -47,7 +46,6 @@ export default function UpdateRecords() {
   const { account, loading: sessionLoading } = useSession({ role: 'donor' })
 
   const [rules, setRules] = useState({ min_weight_kg: 50, whole_blood_cooldown_days: 120, platelet_cooldown_days: 14 })
-  const [staleAfterMin, setStaleAfterMin] = useState(15)
   const [donor, setDonor] = useState(null)
   const [elig, setElig] = useState(null)
   const [form, setForm] = useState({ weight: '', lastDonation: '', type: 'WHOLE_BLOOD', route: '' })
@@ -77,10 +75,7 @@ export default function UpdateRecords() {
 
   useEffect(() => {
     load()
-    configApi.get().then((c) => {
-      setRules(c.eligibility)
-      setStaleAfterMin(c.dispatch?.location_stale_after_minutes ?? 15)
-    }).catch(() => {})
+    configApi.get().then((c) => setRules(c.eligibility)).catch(() => {})
   }, [load])
 
   const set = (k) => (e) => {
@@ -216,13 +211,6 @@ export default function UpdateRecords() {
               ? `Commute matching active on ${donor.commute_route.segments.length} segment(s).`
               : 'No commute route saved — add one below for route-aware matching.'}
           </p>
-
-          <LocationCard
-            donorId={account?.id}
-            location={donor?.current_location}
-            staleAfterMin={staleAfterMin}
-            onSaved={load}
-          />
         </aside>
 
         {/* Main */}
@@ -394,84 +382,6 @@ function RecordDonation({ donorId, rules, onDone }) {
         </p>
       )}
     </Card>
-  )
-}
-
-/**
- * Location capture used to fire once, silently, at signup — a Safari/iOS
- * gesture-context loss, a permission denial, or a slow GPS fix could all
- * leave `current_location` null forever with no way to notice or fix it.
- * This gives every donor a permanent, retryable, error-surfacing control,
- * and shows when the last fix is going stale (dispatch.py's route-matching
- * ignores a fix older than `staleAfterMin`; the ripple radius check does
- * not, so a very old fix can also just be wrong).
- */
-function LocationCard({ donorId, location, staleAfterMin, onSaved }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
-  const [justSaved, setJustSaved] = useState(false)
-
-  const updatedAt = location?.updated_at ? new Date(location.updated_at) : null
-  const ageMin = updatedAt ? (Date.now() - updatedAt.getTime()) / 60000 : null
-  const isStale = ageMin != null && ageMin > staleAfterMin
-
-  async function refresh() {
-    if (!donorId || busy) return
-    setBusy(true)
-    setError(null)
-    setJustSaved(false)
-    try {
-      const { lat, lng } = await captureLocation()
-      await donorApi.updateLocation(donorId, lat, lng)
-      setJustSaved(true)
-      onSaved?.()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="rounded-xl border border-line bg-card p-4">
-      <div className="flex items-center gap-3">
-        <span className="grid size-7 place-items-center rounded-lg bg-donor/10 text-donor">
-          <MapPin className="size-3.5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold">Live Location</p>
-          <p className="text-[10px] text-text-faint">
-            {location
-              ? isStale
-                ? `Last fix ${Math.round(ageMin)} min ago — getting stale`
-                : `Updated ${Math.round(ageMin)} min ago`
-              : 'Not set — ripple can\u2019t judge your distance'}
-          </p>
-        </div>
-      </div>
-
-      {error && (
-        <p className="mt-2 flex items-center gap-1.5 text-[10px] text-primary">
-          <TriangleAlert className="size-3 shrink-0" /> {error}
-        </p>
-      )}
-      {justSaved && !error && (
-        <p className="mt-2 flex items-center gap-1.5 text-[10px] text-success">
-          <CheckCircle2 className="size-3 shrink-0" /> Location updated.
-        </p>
-      )}
-
-      <Button
-        type="button"
-        variant="outline"
-        className="mt-3 w-full"
-        onClick={refresh}
-        disabled={busy}
-      >
-        {busy && <Loader2 className="size-3.5 animate-spin" />}
-        {location ? 'Update my location' : 'Enable location'}
-      </Button>
-    </div>
   )
 }
 

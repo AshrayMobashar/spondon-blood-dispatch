@@ -1,22 +1,30 @@
 @import "tailwindcss";
 
-/* ── Spondon design tokens (from Figma: Ashray 0/1/2) ─────────────── */
 @theme {
-  --color-ink: #0a0d14; /* page background */
-  --color-card: #111827; /* card / surface background */
-  --color-line: #1e2535; /* default border */
+  --color-ink: #05070a; 
+  --color-card: rgba(17, 24, 39, 0.5); 
+  --color-line: rgba(255, 255, 255, 0.08); 
 
-  --color-primary: #c0392b; /* blood red (brand / patient) */
-  --color-donor: #8e44ad; /* purple (donor) */
-  --color-admin: #2980b9; /* blue (hospital / admin) */
-  --color-success: #27ae60; /* green */
-  --color-warning: #f39c12; /* amber */
+  --color-primary: #e11d48; /* Vibrant Rose/Red */
+  --color-donor: #a855f7; /* Vibrant Purple */
+  --color-admin: #3b82f6; /* Vibrant Blue */
+  --color-success: #10b981; /* Emerald */
+  --color-warning: #f59e0b; /* Amber */
 
-  --color-text-strong: #e2e8f0; /* near-white body text */
-  --color-text-muted: #a0aec0; /* muted labels */
-  --color-text-faint: #4a5568; /* faint / secondary copy */
+  --color-text-strong: #f8fafc; 
+  --color-text-muted: #94a3b8; 
+  --color-text-faint: #475569; 
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  
+  --animate-blob: blob 15s infinite alternate ease-in-out;
+}
+
+@keyframes blob {
+  0% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(40px, -60px) scale(1.1); }
+  66% { transform: translate(-30px, 30px) scale(0.9); }
+  100% { transform: translate(0px, 0px) scale(1); }
 }
 
 html,
@@ -32,4 +40,13 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glassmorphism utility */
+.glass {
+  background: var(--color-card);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--color-line);
+  box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.05);
 }

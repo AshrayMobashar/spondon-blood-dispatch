@@ -9,7 +9,7 @@ services:
     image: mongo:7
     restart: unless-stopped
     ports:
-      - "27017:27017"          # drop this line if you don't need a local shell/Compass
+      - "27018:27017"          # drop this line if you don't need a local shell/Compass
     volumes:
       - mongo-data:/data/db
     healthcheck:
@@ -42,7 +42,7 @@ services:
       RARE_SMS_ALERTS: "true"
     # Anything else (SMS/FCM/OpenAI/Maps/blood-bank keys) can go in
     # backend/.env — uncomment to load it instead of hard-coding keys here.
-    # env_file: ./backend/.env
+    env_file: ./backend/.env
 
 volumes:
   mongo-data:

@@ -12,7 +12,6 @@ import gps from '../assets/icons/gps.svg'
 import dnd from '../assets/icons/dnd.svg'
 import { configApi, donorApi, requestApi } from '../lib/api.js'
 import { useSession } from '../lib/session.js'
-import CommuteMap from '../components/CommuteMap.jsx'
 
 /* ── Small building blocks ───────────────────────────────────────── */
 function Toggle({ on, color = 'bg-donor', onChange, disabled }) {
@@ -65,23 +64,10 @@ export default function Ashray1() {
   const [donor, setDonor] = useState(null)
   const [elig, setElig] = useState(null)
   const [logs, setLogs] = useState([])
-  const [pings, setPings] = useState([])
   const [tz, setTz] = useState('Asia/Dhaka')
   const [staleAfter, setStaleAfter] = useState(15)
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
-  // Map route editor: null when viewing, an array of {lat,lng,name} when drawing.
-  const [draftPoints, setDraftPoints] = useState(null)
-
-  const loadPings = useCallback(async () => {
-    if (!account) return
-    try {
-      const res = await donorApi.nearbyPings(account.id)
-      setPings(res.pings ?? [])
-    } catch {
-      /* the map simply shows no pings — never block the page on it */
-    }
-  }, [account])
 
   const load = useCallback(async () => {
     if (!account) return
@@ -94,11 +80,10 @@ export default function Ashray1() {
       setElig(e)
       const all = await requestApi.pingLogs().catch(() => [])
       setLogs(all.filter((l) => l.donor_id === account.id))
-      loadPings()
     } catch (err) {
       setError(err.message)
     }
-  }, [account, loadPings])
+  }, [account])
 
   useEffect(() => {
     load()
@@ -110,13 +95,6 @@ export default function Ashray1() {
       })
       .catch(() => {})
   }, [load])
-
-  // Fresh emergencies appear without a reload — poll the map feed every 20 s.
-  useEffect(() => {
-    if (!account) return undefined
-    const id = setInterval(loadPings, 20_000)
-    return () => clearInterval(id)
-  }, [account, loadPings])
 
   // Local wall-clock time in the deployment's zone — the same basis the
   // backend evaluates the sleep window against.
@@ -175,80 +153,20 @@ export default function Ashray1() {
   }
 
   /** The engine only fires a proactive route ping while the donor's live fix is
-   *  on the matching road, so the panel needs a way to move that fix. Prefer the
-   *  saved waypoint's own coordinates so the map dot lands on the real road. */
+   *  on the matching road, so the panel needs a way to move that fix. */
   async function setLocation(segment) {
     if (!account) return
-    const wp = (donor?.commute_route?.points ?? []).find((p) => p.name === segment)
-    const loc = donor?.current_location
-    await pickLocation(
-      wp?.lat ?? loc?.lat ?? 23.7806,
-      wp?.lng ?? loc?.lng ?? 90.3792,
-      segment,
-    )
-  }
-
-  /** Set the donor's live GPS fix to a point on the map (or a waypoint). */
-  async function pickLocation(lat, lng, name) {
-    if (!account) return
     setSaving(true)
     setError(null)
     try {
-      await donorApi.updateLocation(account.id, lat, lng, name || 'Off route')
-      await load()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  /* ── Draw-a-route-on-the-map editor ─────────────────────────────── */
-  const editing = draftPoints !== null
-
-  function startEdit() {
-    // Seed from the saved route's coordinates; a name-only route starts blank
-    // so the donor can place its waypoints on the actual map.
-    setDraftPoints((donor?.commute_route?.points ?? []).map((p) => ({ ...p })))
-    setError(null)
-  }
-  function cancelEdit() {
-    setDraftPoints(null)
-    setError(null)
-  }
-  function addDraftPoint({ lat, lng }) {
-    setDraftPoints((pts) => [...(pts ?? []), { lat, lng, name: '' }])
-  }
-  function moveDraftPoint(i, { lat, lng }) {
-    setDraftPoints((pts) => pts.map((p, j) => (j === i ? { ...p, lat, lng } : p)))
-  }
-  function renameDraftPoint(i, name) {
-    setDraftPoints((pts) => pts.map((p, j) => (j === i ? { ...p, name } : p)))
-  }
-  function removeDraftPoint(i) {
-    setDraftPoints((pts) => pts.filter((_, j) => j !== i))
-  }
-
-  async function saveDraftRoute() {
-    if (!account || !draftPoints) return
-    const named = draftPoints
-      .map((p) => ({ ...p, name: (p.name || '').trim() }))
-      .filter((p) => p.name)
-    if (named.length === 0) {
-      setError('Give each waypoint the road-segment name a request would carry (e.g. "Kazipara").')
-      return
-    }
-    setSaving(true)
-    setError(null)
-    try {
-      await donorApi.saveRoute(
+      const loc = donor?.current_location
+      await donorApi.updateLocation(
         account.id,
-        named.map((p) => p.name),
-        donor?.commute_route?.label ?? 'Daily commute',
-        named.map((p) => ({ lat: p.lat, lng: p.lng, name: p.name })),
+        loc?.lat ?? 23.7806,
+        loc?.lng ?? 90.3792,
+        segment,
       )
-      setDraftPoints(null)
-      await load()
+      load()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -289,11 +207,6 @@ export default function Ashray1() {
   }
 
   const sm = donor?.sleep_mode ?? {}
-  // Sleep Mode is an on/off switch from the donor's point of view: flipping it
-  // on means "hold my pings" right now, so the status must read SLEEPING the
-  // moment the toggle is on — not only once the clock reaches the window. The
-  // window (below) still records the hours it is meant to cover.
-  const inSleepWindow = sm.enabled && inWindow(nowHHMM, sm.start ?? '23:00', sm.end ?? '07:00')
   const sleeping = !!sm.enabled
   const segments = donor?.commute_route?.segments ?? []
   // A saved-but-paused route is not the same as no route at all.
@@ -311,9 +224,7 @@ export default function Ashray1() {
     {
       label: 'Sleep Window',
       value: `${sm.start ?? '23:00'} – ${sm.end ?? '07:00'}`,
-      sub: sm.enabled
-        ? `${inSleepWindow ? 'Within window' : 'Outside window'} · now ${nowHHMM} ${tz.split('/')[1] ?? ''}`
-        : 'Sleep Mode off',
+      sub: sm.enabled ? `Protected · now ${nowHHMM} ${tz.split('/')[1] ?? ''}` : 'Sleep Mode off',
       valueColor: 'text-white',
       subColor: 'text-donor',
     },
@@ -329,7 +240,7 @@ export default function Ashray1() {
     {
       label: 'Sleep Mode',
       value: sleeping ? 'SLEEPING' : 'AWAKE',
-      sub: sleeping ? 'Not receiving pings' : 'Receiving pings',
+      sub: sleeping ? 'Pings suppressed' : 'Receiving pings',
       valueColor: sleeping ? 'text-donor' : 'text-success',
       subColor: sleeping ? 'text-donor/60' : 'text-success/60',
     },
@@ -697,16 +608,8 @@ export default function Ashray1() {
           <div className="grid grid-cols-1 gap-6 p-6 xl:grid-cols-[1fr_220px]">
             <div>
               <div className="flex items-center gap-3">
-                <span
-                  className={`grid size-10 place-items-center rounded-xl ${
-                    activeTab === 0 ? 'bg-donor/10' : activeTab === 1 ? 'bg-admin/10' : 'bg-warning/10'
-                  }`}
-                >
-                  <img
-                    src={activeTab === 0 ? moonLg : activeTab === 1 ? commute : pingsIcon}
-                    alt=""
-                    className="size-5"
-                  />
+                <span className="grid size-10 place-items-center rounded-xl bg-donor/10">
+                  <img src={moonLg} alt="" className="size-5" />
                 </span>
                 <div>
                   <h1 className="text-base font-bold">
@@ -760,156 +663,6 @@ export default function Ashray1() {
 
               {activeTab === 1 && (
                 <div className="mt-6 space-y-4">
-                  {/* Live map — the route the donor travels and the emergencies on it */}
-                  <div className="rounded-xl border border-admin/30 bg-card p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-semibold text-text-muted">
-                          Your commute &amp; live pings
-                        </p>
-                        <p className="mt-1 text-[10px] leading-relaxed text-text-faint">
-                          {editing
-                            ? 'Click the map to drop each stop of your route, drag to adjust, then name every stop below and save.'
-                            : 'Click a waypoint — or anywhere on your road — to report your live GPS is there now. 🩸 markers are active requests.'}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 gap-2">
-                        {!editing ? (
-                          <button
-                            type="button"
-                            onClick={startEdit}
-                            className="rounded-lg border border-admin/40 bg-admin/10 px-3 py-1.5 text-[11px] font-semibold text-admin hover:bg-admin/20"
-                          >
-                            Edit route on map
-                          </button>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={saveDraftRoute}
-                              disabled={saving}
-                              className="rounded-lg border border-success/40 bg-success/10 px-3 py-1.5 text-[11px] font-semibold text-success hover:bg-success/20 disabled:opacity-50"
-                            >
-                              Save route
-                            </button>
-                            <button
-                              type="button"
-                              onClick={cancelEdit}
-                              disabled={saving}
-                              className="rounded-lg border border-line bg-[#0d111a] px-3 py-1.5 text-[11px] text-text-faint hover:border-line/80 disabled:opacity-50"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mt-4">
-                      <CommuteMap
-                        route={donor?.commute_route}
-                        draftPoints={draftPoints ?? []}
-                        editing={editing}
-                        location={donor?.current_location}
-                        staleAfter={staleAfter}
-                        pings={pings}
-                        donorBloodType={donor?.blood_type}
-                        onAddPoint={addDraftPoint}
-                        onMovePoint={moveDraftPoint}
-                        onPickLocation={pickLocation}
-                      />
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 border-t border-line pt-3 text-[10px] text-text-faint">
-                      <span className="flex items-center gap-1.5">
-                        <span className="size-2 rounded-full bg-[#ef4444]" /> request on your route now
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className="size-2 rounded-full bg-[#6366f1]" /> your saved route
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className="size-2 rounded-full bg-[#f43f5e]" /> matches your {donor?.blood_type}
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className="size-2 rounded-full bg-success" /> your live GPS
-                      </span>
-                      <span className="ml-auto text-[#4b5563]">© OpenStreetMap · CARTO</span>
-                    </div>
-
-                    {editing && (
-                      <div className="mt-4 space-y-2 border-t border-line pt-3">
-                        <p className="text-[10px] font-semibold text-text-muted">
-                          Name each stop — this is the road name a request must carry to match.
-                        </p>
-                        {draftPoints.length === 0 && (
-                          <p className="rounded-lg border border-line bg-[#0d111a] p-2.5 text-[10px] text-text-faint">
-                            Click the map to add your first stop.
-                          </p>
-                        )}
-                        {draftPoints.map((p, i) => (
-                          <div key={i} className="flex items-center gap-2">
-                            <span className="grid size-5 shrink-0 place-items-center rounded-full bg-admin text-[8px] font-bold text-white">
-                              {i + 1}
-                            </span>
-                            <input
-                              value={p.name}
-                              onChange={(e) => renameDraftPoint(i, e.target.value)}
-                              placeholder="Road segment (e.g. Kazipara)"
-                              className="min-w-0 flex-1 rounded-md border border-line bg-[#0d111a] px-2 py-1 text-[11px] text-white outline-none focus:border-admin/60"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => removeDraftPoint(i)}
-                              className="shrink-0 rounded-md border border-line px-2 py-1 text-[11px] text-text-faint hover:border-primary/40 hover:text-primary"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {!editing && pings.length > 0 && (
-                      <div className="mt-4 space-y-1.5 border-t border-line pt-3">
-                        <p className="text-[10px] font-semibold text-text-muted">
-                          Active requests ({pings.length})
-                        </p>
-                        {pings.slice(0, 5).map((p) => (
-                          <div
-                            key={p.request_id}
-                            className="flex items-center justify-between gap-2 text-[10px]"
-                          >
-                            <span className="flex items-center gap-2 truncate">
-                              <span
-                                className={`size-1.5 shrink-0 rounded-full ${
-                                  p.blood_type_match && p.on_route_now
-                                    ? 'bg-[#ef4444]'
-                                    : p.blood_type_match && p.on_saved_route
-                                      ? 'bg-[#6366f1]'
-                                      : p.blood_type_match
-                                        ? 'bg-[#f43f5e]'
-                                        : 'bg-[#6b7280]'
-                                }`}
-                              />
-                              <span className="font-semibold text-text-strong">{p.blood_type}</span>
-                              <span className="truncate text-text-faint">
-                                {p.hospital}
-                                {p.road_segment ? ` · ${p.road_segment}` : ''}
-                              </span>
-                            </span>
-                            <span className="shrink-0 text-text-faint">
-                              {p.blood_type_match && p.on_route_now
-                                ? 'on your route now'
-                                : p.distance_km != null
-                                  ? `${p.distance_km} km`
-                                  : '—'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
                   <div className="rounded-xl border border-line bg-card p-4">
                     <p className="text-xs font-semibold text-text-muted">How this works</p>
                     <p className="mt-2 text-[11px] leading-relaxed text-text-faint">
