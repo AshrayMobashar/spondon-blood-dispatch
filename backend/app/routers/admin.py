@@ -225,6 +225,17 @@ async def review_certificate(
     }
 
 
+# ── Appeals ──────────────────────────────────────────────────────────
+@router.get("/appeals", summary="Appeals awaiting review")
+async def list_appeals(status: str | None = None, admin: Admin = Depends(get_current_admin)):
+    query = (
+        Appeal.find(Appeal.status == status.upper())
+        if status else Appeal.find_all()
+    )
+    appeals = await query.sort(-Appeal.created_at).to_list()
+    return [serialize(a) for a in appeals]
+
+
 # ── Rare-blood escalations ───────────────────────────────────────────
 @router.get("/escalations", summary="Requests handed to blood banks / NGO hotlines")
 async def list_escalations(admin: Admin = Depends(get_current_admin)):

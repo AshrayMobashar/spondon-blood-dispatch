@@ -320,6 +320,75 @@ async def main() -> int:
             "lat": 23.7285, "lng": 90.3995, "road_segment": "Kazipara",
         })
 
+        # GET symmetry: the saved route can be read back on its own.
+        r = await c.get(f"/api/donors/{did}/commute-route")
+        check("The saved commute route can be read back via GET",
+              r.status_code == 200 and r.json()["commute_route"]["segments"] == ["Mirpur-Rd", "Kazipara"],
+              str(r.json())[:200])
+
+        # Robustness: segment matching is forgiving of case and stray whitespace.
+        # A donor whose GPS reports "  kazipara " must still match a request on
+        # "Kazipara" — otherwise the whole feature silently fails to fire.
+        await c.put(f"/api/donors/{did}/location", json={
+            "lat": 23.7285, "lng": 90.3995, "road_segment": "  kazipara ",
+        })
+        d = (await c.post("/api/dispatch/evaluate",
+                          json={"request_id": req_id, "now": "10:00"})).json()
+        mine = [x for x in d["results"] if x["donor_id"] == did]
+        check("Segment matching ignores case and whitespace (kazipara == Kazipara)",
+              bool(mine) and mine[0]["decision"] == "ROUTE_MATCH", str(mine)[:300])
+        await c.put(f"/api/donors/{did}/location", json={
+            "lat": 23.7285, "lng": 90.3995, "road_segment": "Kazipara",
+        })
+
+        # Robustness: a malformed sleep-window time is refused at the boundary,
+        # not swallowed into the sleep-window maths where it would 500 dispatch.
+        bad_time = await c.put(f"/api/donors/{did}/sleep-mode", json={
+            "enabled": True, "start": "7am", "end": "07:00",
+        })
+        check("A malformed sleep-window time is rejected with 422, not a 500",
+              bad_time.status_code == 422, f"got {bad_time.status_code}")
+
+        # An all-blank commute route is a client error, not a silently inert one.
+        blank = await c.put(f"/api/donors/{did}/commute-route",
+                            json={"segments": ["", "   "]})
+        check("An all-blank commute route is refused (422)",
+              blank.status_code == 422, f"got {blank.status_code}")
+
+        # Per-donor ping preview: a side-effect-free dry run of the rules. A
+        # life-threatening request at 2 a.m. with the emergency box ticked WOULD
+        # wake this donor — surfaced before any real emergency tests it.
+        await c.put(f"/api/donors/{did}/sleep-mode", json={
+            "enabled": True, "start": "23:00", "end": "07:00",
+            "allow_extreme_emergencies": True, "dnd_on": True,
+        })
+        await c.patch(f"/api/admin/requests/{req_id}",
+                      json={"severity": "LIFE_THREATENING"}, headers=ah)
+        logs_before = len((await c.get(f"/api/ping-logs?request_id={req_id}")).json())
+        prev = (await c.post(f"/api/donors/{did}/ping-preview",
+                             json={"request_id": req_id, "now": "02:00"})).json()
+        check("Ping preview shows a 2 a.m. life-threatening request WOULD wake the donor",
+              prev["would_ping"] and prev["decision"] == "EMERGENCY_BREAKTHROUGH"
+              and prev["fcm_bypass_dnd"], str(prev)[:300])
+        logs_after = len((await c.get(f"/api/ping-logs?request_id={req_id}")).json())
+        check("Ping preview writes no PingLog and dispatches to no one (dry run)",
+              logs_after == logs_before, f"{logs_before} -> {logs_after}")
+        await c.put(f"/api/donors/{did}/sleep-mode", json={
+            "enabled": False, "start": "23:00", "end": "07:00",
+            "allow_extreme_emergencies": True, "dnd_on": False,
+        })
+
+        # Going offline clears the fix, so the proactive route ping stops firing.
+        await c.delete(f"/api/donors/{did}/location")
+        d = (await c.post("/api/dispatch/evaluate",
+                          json={"request_id": req_id, "now": "10:00"})).json()
+        mine = [x for x in d["results"] if x["donor_id"] == did]
+        check("Clearing the live fix stops the route ping (no stale position)",
+              bool(mine) and mine[0]["decision"] != "ROUTE_MATCH", str(mine)[:300])
+        await c.put(f"/api/donors/{did}/location", json={
+            "lat": 23.7285, "lng": 90.3995, "road_segment": "Kazipara",
+        })
+
         # ── Module 1.3 — Rare-blood override ────────────────────────
         section("M1F3 — Rare-Blood City-Wide Override")
 

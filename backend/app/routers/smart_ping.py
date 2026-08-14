@@ -10,15 +10,19 @@ from fastapi import APIRouter, HTTPException
 from .. import config, integrations
 from ..dispatch import (
     CITYWIDE_RARE, dispatch_block_reason, escalate, escalation_due,
-    is_dispatchable, run_dispatch, triage,
+    evaluate_donor, is_dispatchable, run_dispatch, triage,
 )
 from ..eligibility import recalculate
-from ..models import Account, BloodRequest, HealthProfile, PingLog, CommuteRoute, GeoPoint, utcnow
+from ..models import (
+    Account, BloodRequest, HealthProfile, PingLog, CommuteRoute, RoutePoint, GeoPoint, utcnow,
+)
 from ..realtime import feed
 from ..schemas import (
-    DonorCreate, SleepModeUpdate, RouteUpdate, LocationUpdate, EvaluateBody,
+    DonorCreate, SleepModeUpdate, RouteUpdate, LocationUpdate, EvaluateBody, PingPreview,
 )
-from ..services import to_oid, serialize
+from ..services import (
+    to_oid, serialize, normalize_segments, route_is_saved_for, on_route_now,
+)
 from ..zones import zone_of
 
 router = APIRouter()
@@ -113,11 +117,35 @@ async def update_sleep_mode(donor_id: str, body: SleepModeUpdate):
 
 
 # ── Commute route ────────────────────────────────────────────────────
+@router.get("/donors/{donor_id}/commute-route", summary="Get the saved commute route")
+async def get_route(donor_id: str):
+    """Read back the saved route so a donor's app can render it.
+
+    Symmetry with sleep-mode: there is a GET for the route as well as the
+    write/toggle/clear actions, so the UI never has to fetch the whole donor
+    document just to show a commute.
+    """
+    donor = await _get_donor(donor_id)
+    return {
+        "donor_id": str(donor.id),
+        "commute_route": (
+            donor.commute_route.model_dump(mode="json") if donor.commute_route else None
+        ),
+    }
+
+
 @router.put("/donors/{donor_id}/commute-route", summary="Save/replace commute route")
 async def save_route(donor_id: str, body: RouteUpdate):
     donor = await _get_donor(donor_id)
+    segments = normalize_segments(body.segments)
+    # The schema guarantees at least one non-blank segment, so an all-blank list
+    # never reaches here to produce an inert route.
+    points = [
+        RoutePoint(lat=p.lat, lng=p.lng, name=(p.name.strip() if p.name else None))
+        for p in (body.points or [])
+    ]
     donor.commute_route = CommuteRoute(
-        segments=body.segments, label=body.label, enabled=body.enabled
+        segments=segments, points=points, label=body.label, enabled=body.enabled
     )
     await donor.save()
     return {
@@ -169,6 +197,104 @@ async def update_location(donor_id: str, body: LocationUpdate):
         "message": "Location updated",
         "current_location": donor.current_location.model_dump(mode="json"),
     }
+
+
+@router.delete("/donors/{donor_id}/location", summary="Clear the live GPS fix (go offline)")
+async def clear_location(donor_id: str):
+    """Drop the donor's last known position — e.g. they revoked location or the
+    app went to background.
+
+    Once cleared there is no fix to compare against the saved route, so the
+    proactive commute ping correctly stops firing (`on_route_now` needs a fresh
+    position) — the same corner case as a stale fix, reached deliberately.
+    """
+    donor = await _get_donor(donor_id)
+    donor.current_location = None
+    await donor.save()
+    return {"donor_id": str(donor.id), "message": "Live location cleared"}
+
+
+# ── Map data: the donor's route + active pings around it ─────────────
+@router.get("/donors/{donor_id}/nearby-pings",
+            summary="Active requests to plot on the donor's commute map")
+async def nearby_pings(donor_id: str):
+    """Everything the donor's Leaflet map needs in one call.
+
+    Returns the donor's own saved route and live fix, plus every OPEN request
+    that is actually broadcasting and carries a hospital location — each tagged
+    with the flags the map colours by:
+
+      • ``blood_type_match`` — the donor could answer this at all.
+      • ``on_saved_route``  — the request sits on a segment they have saved.
+      • ``on_route_now``    — and their live GPS is on that segment right now
+                               (the zero-extra-travel proactive-ping case).
+      • ``distance_km``     — straight-line hospital→donor, when both are known.
+
+    A shadow-muted request never appears here for the same reason it never
+    reaches dispatch: ``broadcast`` is False, so the donor network cannot see it.
+    """
+    donor = await _get_donor(donor_id)
+    reqs = await BloodRequest.find(BloodRequest.status == "OPEN").to_list()
+
+    loc = donor.current_location
+    pings = []
+    for req in reqs:
+        hosp = req.hospital_location
+        if not req.broadcast or hosp is None:
+            continue
+        distance_km = None
+        if loc is not None:
+            distance_km = integrations.haversine_km(hosp.lat, hosp.lng, loc.lat, loc.lng)
+        pings.append({
+            "request_id": str(req.id),
+            "patient_name": req.patient_name,
+            "hospital": req.hospital,
+            "blood_type": req.blood_type,
+            "component": req.component,
+            "severity": req.severity,
+            "units": req.units,
+            "road_segment": req.road_segment,
+            "lat": hosp.lat,
+            "lng": hosp.lng,
+            "hospital_zone": zone_of(hosp),
+            "blood_type_match": donor.blood_type == req.blood_type,
+            "on_saved_route": route_is_saved_for(donor, req),
+            "on_route_now": on_route_now(donor, req),
+            "distance_km": round(distance_km, 2) if distance_km is not None else None,
+        })
+
+    # Closest first, so the map's list rail reads most-relevant-down.
+    pings.sort(key=lambda p: (p["distance_km"] is None, p["distance_km"] or 0))
+    return {
+        "donor_id": str(donor.id),
+        "blood_type": donor.blood_type,
+        "current_location": (
+            donor.current_location.model_dump(mode="json") if donor.current_location else None
+        ),
+        "commute_route": (
+            donor.commute_route.model_dump(mode="json") if donor.commute_route else None
+        ),
+        "pings": pings,
+    }
+
+
+# ── Per-donor ping preview (dry run) ─────────────────────────────────
+@router.post("/donors/{donor_id}/ping-preview",
+             summary="Would THIS donor be pinged for a request right now, and why?")
+async def ping_preview(donor_id: str, body: PingPreview):
+    """A side-effect-free dry run of the Smart-Ping rules for one donor.
+
+    Returns the full four-stage verdict (gate → pool → reach → decision) without
+    dispatching to anyone, writing a PingLog, or sending a push. This is what a
+    donor's settings screen calls to answer "with these settings, would a
+    life-threatening request at 2 a.m. actually wake me?" — the feature's
+    behaviour made legible before a real emergency ever tests it.
+    """
+    donor = await _get_donor(donor_id)
+    req = await BloodRequest.get(to_oid(body.request_id))
+    if not req:
+        raise HTTPException(status_code=404, detail="Blood request not found")
+    return evaluate_donor(donor, req, now_hhmm=body.now)
 
 
 # ── Dispatch evaluation (the rule engine) ────────────────────────────
