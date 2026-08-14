@@ -211,6 +211,10 @@ export const requestApi = {
     request(`/requests/${id}/arrival`, {
       method: 'POST', auth: 'user', body: { donor_id: donorId, showed_up: showedUp },
     }),
+  appeal: (donorId, requestId, reason) =>
+    request('/appeals', {
+      method: 'POST', auth: 'user', body: { donor_id: donorId, request_id: requestId, reason },
+    }),
   pingLogs: (requestId) =>
     request(`/ping-logs${requestId ? `?request_id=${requestId}` : ''}`, { auth: false }),
 }
@@ -237,4 +241,8 @@ export const adminApi = {
   escalations: () => request('/admin/escalations'),
   resolveEscalation: (id, action, note) =>
     request(`/admin/escalations/${id}/resolve`, { method: 'POST', body: { action, note } }),
+  appeals: (status) =>
+    request(`/admin/appeals${status ? `?status=${status}` : ''}`),
+  resolveAppeal: (id, action, adminName) =>
+    request(`/appeals/${id}/resolve`, { method: 'POST', body: { action, admin: adminName || 'admin' } }),
 }

@@ -48,6 +48,15 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
   document.head.appendChild(el)
 }
 
+/* Popups are built as HTML strings, so every interpolated value must be escaped
+   — a blood request's hospital / road-segment fields are attacker-controllable
+   (a requester types them) and render in another donor's browser. */
+const esc = (s) =>
+  String(s ?? '').replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+  )
+
 const haversineKm = (a, b) => {
   const R = 6371
   const dLat = ((b[0] - a[0]) * Math.PI) / 180
@@ -197,7 +206,7 @@ export default function CommuteMap({
         })
       } else {
         m.bindPopup(
-          `<b>${p.name || `Waypoint ${i + 1}`}</b><br/>Click to set this as your live location.`,
+          `<b>${esc(p.name || `Waypoint ${i + 1}`)}</b><br/>Click to set this as your live location.`,
         )
         m.on('click', () => onPickLocation?.(p.lat, p.lng, p.name || null))
       }
@@ -239,9 +248,9 @@ export default function CommuteMap({
       if (body) body.style.background = look.color
       const dist = p.distance_km != null ? `${p.distance_km} km away` : 'distance unknown'
       m.bindPopup(
-        `<b>${p.blood_type} needed</b> · ${p.severity.replace(/_/g, ' ').toLowerCase()}<br/>` +
-          `${p.hospital}${p.road_segment ? ` · ${p.road_segment}` : ''}<br/>` +
-          `<span style="color:#9ca3af">${look.label} · ${dist}</span>`,
+        `<b>${esc(p.blood_type)} needed</b> · ${esc(p.severity.replace(/_/g, ' ').toLowerCase())}<br/>` +
+          `${esc(p.hospital)}${p.road_segment ? ` · ${esc(p.road_segment)}` : ''}<br/>` +
+          `<span style="color:#9ca3af">${esc(look.label)} · ${esc(dist)}</span>`,
       )
     })
   }, [pings, donorBloodType])
@@ -267,8 +276,8 @@ export default function CommuteMap({
     L.marker([location.lat, location.lng], { icon, zIndexOffset: 1000 })
       .bindPopup(
         stale
-          ? `Last GPS fix on ${location.road_segment || 'your route'} is over ${staleAfter} min old — treated as "left".`
-          : `You are here${location.road_segment ? ` — on ${location.road_segment}` : ''}.`,
+          ? `Last GPS fix on ${esc(location.road_segment || 'your route')} is over ${staleAfter} min old — treated as "left".`
+          : `You are here${location.road_segment ? ` — on ${esc(location.road_segment)}` : ''}.`,
       )
       .addTo(layer)
   }, [location, staleAfter])
