@@ -96,6 +96,13 @@ async def patch_request(request_id: str, body: RequestPatch, admin: Admin = Depe
     req = await BloodRequest.get(to_oid(request_id))
     if not req:
         raise HTTPException(status_code=404, detail="Blood request not found")
+        
+    if body.status == "OPEN" and req.status in ("LOCKED", "FULFILLED", "NO_SHOW"):
+        req.secured_donor_id = None
+        req.secured_donor_name = None
+        req.secured_donor_phone = None
+        req.secured_at = None
+
     changes = body.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(req, field, value)

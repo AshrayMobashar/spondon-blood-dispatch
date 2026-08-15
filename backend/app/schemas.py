@@ -96,6 +96,10 @@ class CertificateReview(BaseModel):
     action: str = Field(..., description="APPROVE | REJECT")
     note: Optional[str] = None
 
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+
 
 # ── Feature 1 — Smart Ping ───────────────────────────────────────────
 class DonorCreate(BaseModel):
@@ -194,6 +198,10 @@ class SlipUpload(BaseModel):
 
 class AcceptBody(BaseModel):
     donor_id: str = Field(..., description="Donor tapping Accept")
+
+
+class DeclineBody(BaseModel):
+    donor_id: str = Field(..., description="Donor tapping Decline")
 
 
 class ArrivalBody(BaseModel):

@@ -61,6 +61,7 @@ export default function DoctorSlipOcr() {
   const [dispatchResult, setDispatchResult] = useState(null)
   const [error, setError] = useState(null)
   const [ocrLive, setOcrLive] = useState(null)
+  const [liveRequest, setLiveRequest] = useState(null)
   const fileInput = useRef(null)
 
   const load = useCallback(async () => {
@@ -83,6 +84,29 @@ export default function DoctorSlipOcr() {
     () => requests.find((r) => r.id === selectedId) ?? null,
     [requests, selectedId],
   )
+
+  useEffect(() => {
+    if (!selected) {
+      setLiveRequest(null)
+      return
+    }
+    setLiveRequest(selected)
+    
+    if (selected.status === 'OPEN' || selected.status === 'LOCKED') {
+      const interval = setInterval(async () => {
+        try {
+          const req = await requestApi.get(selected.id)
+          setLiveRequest(req)
+          if (req.status !== 'OPEN') {
+            clearInterval(interval)
+          }
+        } catch (e) {
+          // ignore
+        }
+      }, 3000)
+      return () => clearInterval(interval)
+    }
+  }, [selected])
 
   async function pickFile(e) {
     const f = e.target.files?.[0]
@@ -353,7 +377,7 @@ export default function DoctorSlipOcr() {
                   {authorised ? 'Confirm & Fire Emergency Ping' : 'Waiting on slip verification'}
                 </Button>
 
-                {dispatchResult && (
+                {dispatchResult && liveRequest?.status !== 'LOCKED' && (
                   <div className="mt-4 space-y-1.5 rounded-lg border border-line bg-[#0d111a] p-4 text-[11px]">
                     <Row
                       label="Dispatch mode"
@@ -368,6 +392,39 @@ export default function DoctorSlipOcr() {
                     <Row label="Push delivery" value={dispatchResult.push_delivery} />
                     {dispatchResult.blocked_reason && (
                       <Row label="Blocked" value={dispatchResult.blocked_reason} />
+                    )}
+                  </div>
+                )}
+
+                {/* Live Polling Status */}
+                {(liveRequest?.status === 'OPEN' || liveRequest?.status === 'LOCKED') && (
+                  <div className="min-h-[120px] rounded-lg border border-line bg-ink p-4 mt-6">
+                    {liveRequest?.status === 'OPEN' && (
+                      <div className="flex items-center gap-3 text-warning">
+                        <span className="relative flex h-3 w-3">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-warning"></span>
+                        </span>
+                        <p className="text-sm font-semibold">Broadcasting to donors... Waiting for acceptance.</p>
+                      </div>
+                    )}
+                    {liveRequest?.status === 'LOCKED' && (
+                      <div className="animate-in fade-in zoom-in duration-300">
+                        <h4 className="text-sm font-bold text-success mb-3 flex items-center gap-2">
+                          <span className="size-2 rounded-full bg-success" /> Donor Secured!
+                        </h4>
+                        <div className="rounded-lg border border-success/30 bg-success/10 p-4">
+                          <div className="flex items-center gap-4">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-success/20 text-success">
+                              <UserCheck className="size-6" />
+                            </div>
+                            <div>
+                              <p className="font-bold text-white text-base">{liveRequest.secured_donor_name}</p>
+                              <p className="text-sm text-success font-mono mt-1">{liveRequest.secured_donor_phone || 'Number hidden'}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}

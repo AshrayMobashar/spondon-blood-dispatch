@@ -17,12 +17,12 @@ from .. import config, integrations
 from ..db import get_collection
 from ..dispatch import is_dispatchable, run_dispatch
 from ..eligibility import recalculate
-from ..models import Account, BloodRequest, Appeal, GeoPoint, SHADOW_BANNED
+from ..models import Account, BloodRequest, Appeal, GeoPoint, SHADOW_BANNED, PingLog
 from ..schemas import (
-    RequestCreate, AcceptBody, ArrivalBody, AppealCreate, AppealResolve, SlipUpload,
+    RequestCreate, AcceptBody, DeclineBody, ArrivalBody, AppealCreate, AppealResolve, SlipUpload,
 )
 from ..realtime import feed
-from ..security import get_optional_account
+from ..security import get_optional_account, get_current_account
 from ..services import to_oid, serialize, utcnow
 from ..zones import zone_of
 
@@ -166,6 +166,27 @@ async def list_requests():
     return [serialize(r) for r in reqs]
 
 
+@router.get("/requests/incoming", summary="Active requests dispatched to the current donor")
+async def get_incoming_requests(donor: Account = Depends(get_current_account)):
+    pings = await PingLog.find(
+        PingLog.donor_id == str(donor.id),
+        PingLog.pinged == True
+    ).to_list()
+    
+    request_ids = [to_oid(p.request_id) for p in pings]
+    if not request_ids:
+        return []
+
+    reqs = await BloodRequest.find(
+        {"_id": {"$in": request_ids}, "status": "OPEN"}
+    ).sort(-BloodRequest.created_at).to_list()
+    
+    # Exclude requests the donor has already declined
+    reqs = [r for r in reqs if str(donor.id) not in r.declined_by]
+
+    return [serialize(r) for r in reqs]
+
+
 @router.get("/requests/{request_id}", summary="Get request status")
 async def get_request(request_id: str):
     req = await _get_request(request_id)
@@ -176,13 +197,14 @@ async def get_request(request_id: str):
 
 # ── The concurrency lock (atomic first-wins) ─────────────────────────
 @router.post("/requests/{request_id}/accept", summary="Accept a request (atomic lock)")
-async def accept_request(request_id: str, body: AcceptBody):
+async def accept_request(request_id: str, body: AcceptBody, logged_in: Optional[Account] = Depends(get_optional_account)):
     """ACID guarantee: a single conditional `find_one_and_update` flips the
     request OPEN → LOCKED. MongoDB serialises document writes, so out of any
     number of simultaneous accepts exactly ONE succeeds; every runner-up sees
     the document already LOCKED and gets a polite 409 'Donor Secured'."""
     oid = to_oid(request_id)
-    donor = await _get_donor(body.donor_id)
+    donor_id = str(logged_in.id) if logged_in else body.donor_id
+    donor = await _get_donor(donor_id)
     req = await _get_request(request_id)
 
     # A donor who was never pingable must not be able to lock a request by
@@ -203,6 +225,7 @@ async def accept_request(request_id: str, body: AcceptBody):
             "status": "LOCKED",
             "secured_donor_id": str(donor.id),
             "secured_donor_name": donor.name,
+            "secured_donor_phone": donor.phone,
             "secured_at": utcnow(),
         }},
         return_document=ReturnDocument.AFTER,
@@ -244,6 +267,29 @@ async def accept_request(request_id: str, body: AcceptBody):
         "secured_donor_id": updated["secured_donor_id"],
         "secured_donor_name": updated["secured_donor_name"],
         "secured_at": updated["secured_at"].isoformat(),
+    }
+
+
+@router.post("/requests/{request_id}/decline", summary="Decline a request")
+async def decline_request(request_id: str, body: DeclineBody, logged_in: Optional[Account] = Depends(get_optional_account)):
+    oid = to_oid(request_id)
+    donor_id = str(logged_in.id) if logged_in else body.donor_id
+    donor = await _get_donor(donor_id)
+    req = await _get_request(request_id)
+
+    if req.status != "OPEN":
+        raise HTTPException(status_code=400, detail="Request is no longer open")
+
+    collection = get_collection(BloodRequest)
+    await collection.update_one(
+        {"_id": oid},
+        {"$addToSet": {"declined_by": str(donor.id)}}
+    )
+
+    return {
+        "message": "You have declined this request",
+        "request_id": str(oid),
+        "donor_id": str(donor.id)
     }
 
 

@@ -132,6 +132,7 @@ class Account(Document):
     phone: Optional[str] = None
     phone_verified: bool = False
     fcm_token: Optional[str] = None
+    address: Optional[str] = None
     # ── Module 1.1 — eligibility ──
     health: HealthProfile = Field(default_factory=HealthProfile)
     eligibility: Eligibility = Field(default_factory=Eligibility)
@@ -174,7 +175,9 @@ class BloodRequest(Document):
     status: str = "OPEN"                 # OPEN | LOCKED | FULFILLED | NO_SHOW
     secured_donor_id: Optional[str] = None
     secured_donor_name: Optional[str] = None
+    secured_donor_phone: Optional[str] = None
     secured_at: Optional[datetime] = None
+    declined_by: List[str] = []
     # ── Requester link (for shadow-ban) ──
     requester_id: Optional[str] = None    # Account that submitted the request
     requester_name: Optional[str] = None

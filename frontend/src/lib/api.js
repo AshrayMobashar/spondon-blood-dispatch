@@ -136,6 +136,7 @@ export const authApi = {
   register: (payload) =>
     request('/auth/register', { method: 'POST', auth: false, body: payload }),
   me: () => request('/auth/me', { auth: 'user' }),
+  updateProfile: (payload) => request('/auth/me', { method: 'PATCH', auth: 'user', body: payload }),
 }
 
 /* ── Donor ───────────────────────────────────────────────────────── */
@@ -192,6 +193,7 @@ export const donorApi = {
 export const requestApi = {
   create: (body) => request('/requests', { method: 'POST', auth: 'user', body }),
   list: () => request('/requests', { auth: false }),
+  incoming: () => request('/requests/incoming', { auth: 'user' }),
   get: (id) => request(`/requests/${id}`, { auth: false }),
   uploadSlip: (id, image, mime) =>
     request(`/requests/${id}/slip`, { method: 'POST', auth: 'user', body: { image, mime } }),
@@ -205,6 +207,10 @@ export const requestApi = {
   escalate: (id) => request(`/requests/${id}/escalate`, { method: 'POST', auth: 'user' }),
   accept: (id, donorId) =>
     request(`/requests/${id}/accept`, {
+      method: 'POST', auth: 'user', body: { donor_id: donorId },
+    }),
+  decline: (id, donorId) =>
+    request(`/requests/${id}/decline`, {
       method: 'POST', auth: 'user', body: { donor_id: donorId },
     }),
   arrival: (id, donorId, showedUp) =>
