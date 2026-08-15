@@ -30,33 +30,14 @@ class SleepMode(BaseModel):
     dnd_on: bool = False                 # phone OS Do-Not-Disturb currently on
 
 
-class RoutePoint(BaseModel):
-    """One geo-located waypoint of a saved commute route.
-
-    Purely for drawing the route on the donor's map — the matching engine still
-    runs on the `segments` names, never on these coordinates. `name` mirrors the
-    segment this waypoint stands for so the map marker and the matched segment
-    read the same.
-    """
-    lat: float
-    lng: float
-    name: Optional[str] = None
-
-
 class CommuteRoute(BaseModel):
     """The donor's saved daily route.
 
     `enabled` is a pause switch, not a delete: a donor who turns commute
     matching off keeps their segments and can turn it back on without retyping
     the route. Clearing the route entirely is a separate action.
-
-    `segments` (names) stay the single source of truth for *matching*; `points`
-    are the same route expressed as map coordinates, added so the donor's Leaflet
-    map can draw the actual line they travel. A route can carry names without
-    points (typed on the records page) or both (drawn on the map).
     """
     segments: List[str] = []             # named road segments on the daily route
-    points: List[RoutePoint] = []        # map coordinates for those segments (display only)
     label: Optional[str] = None
     enabled: bool = True                 # route-aware matching on/off
     saved_at: datetime = Field(default_factory=utcnow)
@@ -191,6 +172,7 @@ class BloodRequest(Document):
     ocr_notes: Optional[str] = None
     ocr_simulated: Optional[bool] = None   # True when no OCR engine was configured
     slip_image: Optional[str] = None       # data: URI of the uploaded slip
+    slip_image_hash: Optional[str] = None  # SHA-256 hash for exact-duplicate prevention
     slip_reviewed_by: Optional[str] = None
     slip_reviewed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)

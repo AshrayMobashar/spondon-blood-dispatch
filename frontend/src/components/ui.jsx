@@ -5,7 +5,7 @@ import { accents } from './accents.js'
 export function Card({ className = '', children, accent }) {
   const border = accent ? accents[accent].ring.split(' ')[0] : 'border-line'
   return (
-    <div className={`rounded-xl border ${border} bg-card ${className}`}>
+    <div className={`glass rounded-xl ${border} ${className}`}>
       {children}
     </div>
   )
@@ -42,12 +42,12 @@ export function StatCard({ label, value, sub, color = 'primary', subColor }) {
 /* ── Button ──────────────────────────────────────────────────────── */
 export function Button({ variant = 'primary', className = '', as = 'button', ...props }) {
   const base =
-    'inline-flex items-center justify-center gap-2 rounded-full text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
+    'inline-flex items-center justify-center gap-2 rounded-full text-sm font-semibold transition-all duration-300 ease-out disabled:opacity-50 disabled:cursor-not-allowed hover:-translate-y-0.5 active:translate-y-0 active:scale-95'
   const variants = {
-    primary: 'bg-primary text-white hover:bg-primary/90',
-    ghost: 'border border-line bg-card text-text-muted hover:text-white',
-    outline: 'border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20',
-    success: 'bg-success text-white hover:brightness-110',
+    primary: 'bg-gradient-to-r from-primary to-rose-600 text-white shadow-[0_4px_20px_-4px] shadow-primary/40 hover:shadow-primary/60 border border-white/10',
+    ghost: 'border border-line bg-card/40 text-text-muted hover:text-white hover:bg-white/5 backdrop-blur-md',
+    outline: 'border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 hover:border-primary/60 shadow-[0_0_15px_rgba(225,29,72,0.1)] hover:shadow-[0_0_20px_rgba(225,29,72,0.2)]',
+    success: 'bg-gradient-to-r from-success to-emerald-400 text-white shadow-[0_4px_20px_-4px] shadow-success/40 hover:shadow-success/60 border border-white/10',
   }
   const Comp = as
   return <Comp className={`${base} ${variants[variant]} px-5 py-2.5 ${className}`} {...props} />
@@ -119,7 +119,7 @@ export function Field({ label, hint, children }) {
 }
 
 const inputCls =
-  'w-full rounded-lg border border-line bg-[#0d111a] px-4 py-2.5 text-sm text-white placeholder:text-text-faint outline-none transition-colors focus:border-primary/60'
+  'w-full rounded-lg border border-line bg-ink/60 px-4 py-2.5 text-sm text-white placeholder:text-text-faint outline-none transition-all duration-300 focus:border-primary focus:ring-4 focus:ring-primary/20 shadow-inner'
 
 export function Input({ className = '', ...props }) {
   return <input className={`${inputCls} ${className}`} {...props} />
@@ -163,7 +163,7 @@ export function OtpInput({ length = 6, onComplete, onChange }) {
           onKeyDown={(e) => onKey(i, e)}
           inputMode="numeric"
           maxLength={1}
-          className="size-12 rounded-lg border border-line bg-[#0d111a] text-center text-lg font-bold text-white outline-none focus:border-primary/60"
+          className="size-12 rounded-lg border border-line bg-ink/60 text-center text-lg font-bold text-white outline-none transition-all duration-300 focus:border-primary focus:ring-4 focus:ring-primary/20 shadow-inner"
         />
       ))}
     </div>
