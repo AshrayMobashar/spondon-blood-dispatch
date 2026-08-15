@@ -17,6 +17,7 @@ human queue, which is the specified fallback for an unreadable slip anyway.
 import logging
 import math
 import secrets
+import time
 from typing import Optional
 
 import httpx
@@ -203,7 +204,8 @@ _OCR_SYSTEM = (
     "Reply with strict JSON only, no prose, matching this schema: "
     '{"is_medical_slip": bool, "patient_name": string|null, "hospital": string|null, '
     '"blood_type": string|null, "component": "WHOLE_BLOOD"|"PLATELETS"|"PLASMA"|null, '
-    '"units": number|null, "confidence": number between 0 and 1, "notes": string}. '
+    '"units": number|null, "date_written": string|null (ISO 8601), '
+    '"has_stamp_or_signature": bool, "confidence": number between 0 and 1, "notes": string}. '
     "Set is_medical_slip false for anything that is not a medical requisition. "
     "confidence must reflect how legible the handwriting actually is."
 )
@@ -275,6 +277,8 @@ async def read_slip(image_b64: str, mime: str, expected_component: Optional[str]
         "blood_type": parsed.get("blood_type"),
         "component": parsed.get("component"),
         "units": parsed.get("units"),
+        "date_written": parsed.get("date_written"),
+        "has_stamp_or_signature": parsed.get("has_stamp_or_signature"),
         "confidence": float(conf) if conf is not None else None,
         "notes": parsed.get("notes") or "",
         "simulated": False,
@@ -300,9 +304,53 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 # working" instead of claiming a live integration it does not have.
 _maps_error: Optional[str] = None
 
+# A refused key does not start working again on its own. Retrying it on every
+# dispatch would put two doomed HTTP round-trips in front of an emergency ping,
+# so a failure opens a circuit and we serve great-circle immediately until it
+# is worth another look.
+_maps_retry_after: float = 0.0
+
+# Billing disabled, key restricted, API not enabled — an operator has to act.
+# Worth re-checking occasionally in case they just did, but not every dispatch.
+_MAPS_BACKOFF_PERMANENT = 300.0    # 5 min
+_MAPS_BACKOFF_TRANSIENT = 30.0     # timeout or 5xx — may clear by itself
+
 
 def maps_error() -> Optional[str]:
     return _maps_error
+
+
+def _open_maps_circuit(status: Optional[int]) -> None:
+    """Stop calling Maps for a while after `status` (None = network error)."""
+    global _maps_retry_after
+    permanent = status in (401, 403, 400)
+    _maps_retry_after = time.monotonic() + (
+        _MAPS_BACKOFF_PERMANENT if permanent else _MAPS_BACKOFF_TRANSIENT
+    )
+
+
+def _maps_circuit_open() -> bool:
+    return time.monotonic() < _maps_retry_after
+
+
+def _google_message(res) -> str:
+    """The human-readable reason out of a Google error body.
+
+    Google wraps the useful sentence in nested JSON and often ends it with the
+    console URL that fixes the problem. Truncating the raw body cuts that URL in
+    half, which is exactly the part an operator needs, so pull the message field
+    out and keep it whole.
+    """
+    try:
+        payload = res.json()
+        if isinstance(payload, list) and payload:
+            payload = payload[0]
+        msg = (payload or {}).get("error", {}).get("message")
+        if msg:
+            return " ".join(msg.split())
+    except Exception:
+        pass
+    return " ".join(res.text.split())[:300]
 
 
 async def _routes_matrix(origin: tuple, destinations: list) -> Optional[list]:
@@ -328,7 +376,8 @@ async def _routes_matrix(origin: tuple, destinations: list) -> Optional[list]:
                 json=body, headers=headers,
             )
         if res.status_code >= 400:
-            _maps_error = f"Routes API {res.status_code}: {res.text[:160]}"
+            _maps_error = f"Routes API {res.status_code}: {_google_message(res)}"
+            _open_maps_circuit(res.status_code)
             return None
         out: list = [None] * len(destinations)
         for el in res.json():
@@ -341,6 +390,7 @@ async def _routes_matrix(origin: tuple, destinations: list) -> Optional[list]:
         return out
     except Exception as exc:
         _maps_error = f"Routes API error: {exc}"
+        _open_maps_circuit(None)
         return None
 
 
@@ -361,10 +411,13 @@ async def _legacy_distance_matrix(origin: tuple, destinations: list) -> Optional
         res.raise_for_status()
         payload = res.json()
         if payload.get("status") != "OK":
+            status = payload.get("status")
             _maps_error = (
-                f"Distance Matrix {payload.get('status')}: "
-                f"{payload.get('error_message', '')[:160]}"
+                f"Distance Matrix {status}: "
+                f"{' '.join(payload.get('error_message', '').split())}"
             )
+            # REQUEST_DENIED means the key/project is refused, not a blip.
+            _open_maps_circuit(403 if status == "REQUEST_DENIED" else None)
             return None
         rows = payload.get("rows", [])
         if not rows:
@@ -379,6 +432,7 @@ async def _legacy_distance_matrix(origin: tuple, destinations: list) -> Optional
         return out
     except Exception as exc:
         _maps_error = f"Distance Matrix error: {exc}"
+        _open_maps_circuit(None)
         return None
 
 
@@ -395,6 +449,10 @@ async def driving_distances_km(origin: tuple, destinations: list) -> Optional[li
     """
     global _maps_error
     if not maps_configured() or not destinations:
+        return None
+    if _maps_circuit_open():
+        # Already known to be refused. Fall straight through to great-circle
+        # rather than delaying an emergency dispatch on a call that will fail.
         return None
 
     out = await _routes_matrix(origin, destinations)

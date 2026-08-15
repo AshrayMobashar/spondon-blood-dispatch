@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Droplet, ArrowLeft, ArrowRight, CheckCircle2, Siren, TriangleAlert, Loader2,
+  Droplet, ArrowLeft, ArrowRight, CheckCircle2, Siren, TriangleAlert, Loader2, MapPin,
 } from 'lucide-react'
 import Shell from '../../components/Shell.jsx'
 import { Card, Button, Field, Input, Select, OtpInput, Badge } from '../../components/ui.jsx'
@@ -29,6 +29,12 @@ export default function PatientSignup() {
     patient: '', hospital: '', blood: 'O+', component: 'WHOLE_BLOOD',
     units: '2', phone: '', name: '',
   })
+  // GPS coordinates of the hospital, captured via the browser's own
+  // location API — free, no Maps key needed. Ripple dispatch cannot
+  // compute a distance without these, so they ride along with the request.
+  const [coords, setCoords] = useState(null) // { lat, lng }
+  const [locating, setLocating] = useState(false)
+  const [locateError, setLocateError] = useState(null)
   const [devCode, setDevCode] = useState(null)
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
@@ -41,6 +47,29 @@ export default function PatientSignup() {
   const step1Valid = form.patient && form.hospital && form.blood && form.component
   const phoneValid = /^01\d{9}$/.test(phone)
 
+  /** Ask the browser for the device's current GPS position. Called while
+   *  the requester is physically at (or near) the hospital, so this stands
+   *  in as the hospital's coordinates without needing a paid geocoding API. */
+  function shareLocation() {
+    if (!navigator.geolocation) {
+      setLocateError('This browser cannot share location.')
+      return
+    }
+    setLocating(true)
+    setLocateError(null)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+        setLocating(false)
+      },
+      (err) => {
+        setLocateError(err.message || 'Could not read your location.')
+        setLocating(false)
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    )
+  }
+
   /** The emergency details ride along with the OTP so they survive verification. */
   const pendingRequest = () => ({
     patient_name: form.patient,
@@ -49,6 +78,7 @@ export default function PatientSignup() {
     component: form.component,
     units: Math.max(1, parseInt(form.units, 10) || 1),
     severity: 'CRITICAL',
+    ...(coords ? { hospital_lat: coords.lat, hospital_lng: coords.lng } : {}),
   })
 
   async function sendOtp() {
@@ -150,6 +180,37 @@ export default function PatientSignup() {
               <Field label="Hospital">
                 <Input value={form.hospital} onChange={set('hospital')} placeholder="e.g. Dhaka Medical College" />
               </Field>
+              <div>
+                <button
+                  type="button"
+                  onClick={shareLocation}
+                  disabled={locating}
+                  className={`flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-xs font-semibold transition ${
+                    coords
+                      ? 'border-success/40 bg-success/10 text-success'
+                      : 'border-line bg-[#0d111a] text-text-muted hover:text-white'
+                  }`}
+                >
+                  {locating ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <MapPin className="size-3.5" />
+                  )}
+                  {coords
+                    ? `Location shared (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`
+                    : 'Share hospital location (GPS)'}
+                </button>
+                <p className="mt-1.5 text-[11px] text-text-faint">
+                  {coords
+                    ? "This lets the ripple engine measure real distance to donors — tap again if you're not at the hospital yet."
+                    : 'Optional, but without it donors are matched without a distance check.'}
+                </p>
+                {locateError && (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-primary">
+                    <TriangleAlert className="size-3 shrink-0" /> {locateError}
+                  </p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Blood Type">
                   <Select value={form.blood} onChange={set('blood')}>

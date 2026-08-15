@@ -415,6 +415,12 @@ function SlipsTab({ requests, busyId, onReview }) {
             <td className="px-5 py-3"><span className="font-bold text-primary">{r.blood_type}</span></td>
             <td className="px-5 py-3">
               <ConfidenceBar value={r.ocr_confidence} />
+              {r.ocr_notes && (
+                <p className="mt-1.5 max-w-[220px] text-[10px] leading-tight text-warning">
+                  <TriangleAlert className="mb-0.5 mr-1 inline size-3" />
+                  {r.ocr_notes}
+                </p>
+              )}
             </td>
             <td className="px-5 py-3"><Badge color={slipColor[r.slip_status]} dot={false}>{r.slip_status.replace('_', ' ')}</Badge></td>
             <td className="px-5 py-3">
