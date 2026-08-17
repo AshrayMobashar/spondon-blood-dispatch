@@ -347,11 +347,6 @@ function RipplesTab({ requests, busyId, onStatus, onToggle, onDelete }) {
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
-            {r.secured_donor_name && r.status !== 'OPEN' && (
-              <p className="mt-1 text-[10px] text-admin font-semibold whitespace-nowrap">
-                Locked to: {r.secured_donor_name}
-              </p>
-            )}
           </td>
           <td className="px-5 py-3">
             <button
@@ -478,24 +473,19 @@ function ConfidenceBar({ value }) {
 
 /* ── Tab 3: accounts ─────────────────────────────────────────────── */
 function AccountsTab({ donors, busyId, onModerate }) {
-  const pureDonors = donors.filter(d => d.role === 'donor')
-  const patients = donors.filter(d => d.role === 'patient')
-
-  const renderTable = (list, title, subtitle) => (
+  return (
     <TableCard
-      title={title}
-      subtitle={subtitle}
+      title="Accounts & moderation"
+      subtitle="Ban blocks the account outright. Shadow-ban lets it keep submitting requests that look active but are silently never broadcast."
       head={['Account', 'Type', 'Phone', 'Flagged', 'Status', 'Actions']}
     >
-      {list.length === 0 ? (
-        <tr><td colSpan="6" className="px-5 py-8 text-center text-text-faint">No accounts found</td></tr>
-      ) : list.map((d) => (
+      {donors.map((d) => (
         <tr key={d.id} className="border-b border-line/60 last:border-0">
           <td className="px-5 py-3">
             <p className="font-semibold text-white">{d.name}</p>
             {d.status_reason && <p className="text-[11px] text-text-faint">{d.status_reason}</p>}
           </td>
-          <td className="px-5 py-3"><span className="font-bold text-primary">{d.blood_type || '—'}</span></td>
+          <td className="px-5 py-3"><span className="font-bold text-primary">{d.blood_type}</span></td>
           <td className="px-5 py-3 text-text-muted">{d.phone || '—'}</td>
           <td className="px-5 py-3">
             <span className={d.flagged_fake_requests > 0 ? 'font-semibold text-warning' : 'text-text-faint'}>
@@ -525,13 +515,6 @@ function AccountsTab({ donors, busyId, onModerate }) {
         </tr>
       ))}
     </TableCard>
-  )
-
-  return (
-    <div className="space-y-6">
-      {renderTable(pureDonors, "Registered Donors", "Verified accounts opted into the emergency ping network.")}
-      {renderTable(patients, "Registered Patients / Family", "Accounts registered solely to submit requests.")}
-    </div>
   )
 }
 
