@@ -136,7 +136,6 @@ export const authApi = {
   register: (payload) =>
     request('/auth/register', { method: 'POST', auth: false, body: payload }),
   me: () => request('/auth/me', { auth: 'user' }),
-  updateProfile: (payload) => request('/auth/me', { method: 'PATCH', auth: 'user', body: payload }),
 }
 
 /* ── Donor ───────────────────────────────────────────────────────── */
@@ -193,7 +192,6 @@ export const donorApi = {
 export const requestApi = {
   create: (body) => request('/requests', { method: 'POST', auth: 'user', body }),
   list: () => request('/requests', { auth: false }),
-  incoming: () => request('/requests/incoming', { auth: 'user' }),
   get: (id) => request(`/requests/${id}`, { auth: false }),
   uploadSlip: (id, image, mime) =>
     request(`/requests/${id}/slip`, { method: 'POST', auth: 'user', body: { image, mime } }),
@@ -209,10 +207,6 @@ export const requestApi = {
     request(`/requests/${id}/accept`, {
       method: 'POST', auth: 'user', body: { donor_id: donorId },
     }),
-  decline: (id, donorId) =>
-    request(`/requests/${id}/decline`, {
-      method: 'POST', auth: 'user', body: { donor_id: donorId },
-    }),
   arrival: (id, donorId, showedUp) =>
     request(`/requests/${id}/arrival`, {
       method: 'POST', auth: 'user', body: { donor_id: donorId, showed_up: showedUp },
@@ -223,6 +217,48 @@ export const requestApi = {
     }),
   pingLogs: (requestId) =>
     request(`/ping-logs${requestId ? `?request_id=${requestId}` : ''}`, { auth: false }),
+}
+
+/* ── Live En-Route Tracker ───────────────────────────────────────── */
+/** Only the family who opened a request and the donor who accepted it can
+ *  reach any of these — the server enforces it, so a 403 here is the feature
+ *  working, not a bug. */
+export const tripApi = {
+  start: (requestId) =>
+    request(`/requests/${requestId}/trip/start`, { method: 'POST', auth: 'user' }),
+  /** One fix. Answers 200 with `accepted: false` for a rejected sample (GPS
+   *  drift, out-of-order replay) — the phone can't act on a rejection, so it
+   *  isn't an error, it just sends the next good fix. */
+  report: (requestId, point) =>
+    request(`/requests/${requestId}/trip/location`, {
+      method: 'POST', auth: 'user', body: point,
+    }),
+  /** Flush fixes buffered while the phone had no connection, oldest first. */
+  flush: (requestId, points) =>
+    request(`/requests/${requestId}/trip/batch`, {
+      method: 'POST', auth: 'user', body: { points },
+    }),
+  get: (requestId) => request(`/requests/${requestId}/trip`, { auth: 'user' }),
+  arrived: (requestId) =>
+    request(`/requests/${requestId}/trip/arrived`, { method: 'POST', auth: 'user' }),
+}
+
+/* ── Direct-Connect Masked Calling ───────────────────────────────── */
+export const callApi = {
+  /** Idempotent: both parties call this on load, and a refresh mid-call must
+   *  rejoin the existing channel rather than open a second one. */
+  open: (requestId) =>
+    request(`/requests/${requestId}/call`, { method: 'POST', auth: 'user' }),
+  get: (requestId) => request(`/requests/${requestId}/call`, { auth: 'user' }),
+  /** Hand the failing VOIP leg over to a temporary GSM number. Same session,
+   *  same participants — only the transport moves. */
+  fallback: (sessionId, evidence) =>
+    request(`/calls/${sessionId}/fallback`, {
+      method: 'POST', auth: 'user', body: evidence,
+    }),
+  end: (sessionId, reason = 'COMPLETED') =>
+    request(`/calls/${sessionId}/end`, { method: 'POST', auth: 'user', body: { reason } }),
+  pool: () => request('/calls/pool', { auth: false }),
 }
 
 /* ── Admin console ───────────────────────────────────────────────── */
