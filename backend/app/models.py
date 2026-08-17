@@ -30,6 +30,19 @@ class SleepMode(BaseModel):
     dnd_on: bool = False                 # phone OS Do-Not-Disturb currently on
 
 
+class RoutePoint(BaseModel):
+    """A waypoint the donor dropped when drawing their commute on the map.
+
+    Purely for redrawing the line: matching still runs on the segment *names*
+    (see `services.seg_key`), because a request carries a road name rather than
+    a coordinate. Keeping the two apart means a donor who drags a pin slightly
+    does not silently stop matching the road they typed.
+    """
+    lat: float
+    lng: float
+    name: Optional[str] = None
+
+
 class CommuteRoute(BaseModel):
     """The donor's saved daily route.
 
@@ -38,6 +51,7 @@ class CommuteRoute(BaseModel):
     the route. Clearing the route entirely is a separate action.
     """
     segments: List[str] = []             # named road segments on the daily route
+    points: List[RoutePoint] = []        # optional map coordinates for those segments
     label: Optional[str] = None
     enabled: bool = True                 # route-aware matching on/off
     saved_at: datetime = Field(default_factory=utcnow)
@@ -48,6 +62,63 @@ class GeoPoint(BaseModel):
     lng: float
     road_segment: Optional[str] = None   # road segment the donor is on right now
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class TripPoint(BaseModel):
+    """One GPS fix reported by a donor already travelling to the hospital.
+
+    Two clocks, deliberately: `recorded_at` is when the donor's phone took the
+    fix, `received_at` is when the server heard about it. They are the same
+    thing only while the connection holds — a phone that buffers fixes through a
+    tunnel and flushes them on reconnect has to be replayed in the order it
+    *measured* them, not the order they arrived, or the trail zig-zags backwards.
+    """
+    lat: float
+    lng: float
+    accuracy_m: Optional[float] = None
+    speed_kmh: Optional[float] = None
+    recorded_at: datetime = Field(default_factory=utcnow)
+    received_at: datetime = Field(default_factory=utcnow)
+
+
+# Trip lifecycle.
+TRIP_EN_ROUTE = "EN_ROUTE"
+TRIP_ARRIVED = "ARRIVED"
+TRIP_CANCELLED = "CANCELLED"
+
+# What the family's tracker is allowed to claim about the donor icon.
+SIGNAL_LIVE = "LIVE"
+SIGNAL_LOST = "SIGNAL_LOST"
+
+
+class Trip(BaseModel):
+    """The donor's journey to the hospital — what the family's live tracker draws.
+
+    Everything here is *last known*, never extrapolated. When the donor's phone
+    drops off the network the icon stops where it was and the ETA stops
+    counting: an invented position is worse than an admitted gap, because a
+    family who trusts a moving dot stops calling and starts waiting.
+    """
+    status: str = TRIP_EN_ROUTE
+    started_at: datetime = Field(default_factory=utcnow)
+    # Last *accepted* fix. A rejected one (implausible jump, out-of-order
+    # replay) must not move the icon or refresh the freshness clock.
+    last_point: Optional[TripPoint] = None
+    last_seen_at: Optional[datetime] = None
+    trail: List[TripPoint] = []
+    updates: int = 0
+    rejected_updates: int = 0
+    # Distance/ETA as computed at `eta_computed_at` — held, not aged.
+    distance_km: Optional[float] = None
+    eta_minutes: Optional[float] = None
+    eta_computed_at: Optional[datetime] = None
+    speed_kmh: Optional[float] = None
+    distance_source: Optional[str] = None      # driving | straight-line
+    # Set when the sweep first notices the silence, cleared on reconnect. Its
+    # presence is what turns the family's ETA orange.
+    signal_lost_at: Optional[datetime] = None
+    signal_drops: int = 0
+    arrived_at: Optional[datetime] = None
 
 
 class Reliability(BaseModel):
@@ -113,7 +184,6 @@ class Account(Document):
     phone: Optional[str] = None
     phone_verified: bool = False
     fcm_token: Optional[str] = None
-    address: Optional[str] = None
     # ── Module 1.1 — eligibility ──
     health: HealthProfile = Field(default_factory=HealthProfile)
     eligibility: Eligibility = Field(default_factory=Eligibility)
@@ -156,9 +226,7 @@ class BloodRequest(Document):
     status: str = "OPEN"                 # OPEN | LOCKED | FULFILLED | NO_SHOW
     secured_donor_id: Optional[str] = None
     secured_donor_name: Optional[str] = None
-    secured_donor_phone: Optional[str] = None
     secured_at: Optional[datetime] = None
-    declined_by: List[str] = []
     # ── Requester link (for shadow-ban) ──
     requester_id: Optional[str] = None    # Account that submitted the request
     requester_name: Optional[str] = None
@@ -178,6 +246,12 @@ class BloodRequest(Document):
     slip_image_hash: Optional[str] = None  # SHA-256 hash for exact-duplicate prevention
     slip_reviewed_by: Optional[str] = None
     slip_reviewed_at: Optional[datetime] = None
+    # ── Live En-Route Tracker ──
+    # Embedded rather than a collection of its own: a request has at most one
+    # live trip (only one donor can hold the lock), and keeping them in one
+    # document means the lock and the journey can never disagree about who is
+    # coming.
+    trip: Optional[Trip] = None
     created_at: datetime = Field(default_factory=utcnow)
 
     @property
@@ -273,6 +347,73 @@ class MedicalCertificate(Document):
 
     class Settings:
         name = "medical_certificates"
+
+
+# Call-channel states.
+CALL_ACTIVE = "ACTIVE"
+CALL_ENDED = "ENDED"
+CALL_EXPIRED = "EXPIRED"
+
+# Which leg is carrying the conversation.
+CALL_MODE_VOIP = "VOIP"
+CALL_MODE_GSM = "GSM_FALLBACK"
+
+
+class CallSession(Document):
+    """A temporary two-party call channel between a family and their donor.
+
+    The whole point is what this document does **not** contain: neither party's
+    real phone number appears anywhere in it. Participants are stored as account
+    ids, and the bridge looks the numbers up from `Account` at dial time and
+    discards them. So a dump of this collection reveals who spoke to whom about
+    which emergency, and no way to ring either of them afterwards.
+
+    `proxy_number` is a Spondon-owned number on loan from the pool, not a
+    participant's — safe to show, and it stops resolving the moment the session
+    ends.
+    """
+    request_id: str
+    donor_id: str
+    family_id: Optional[str] = None            # the requester, when there was one
+    status: str = CALL_ACTIVE                  # ACTIVE | ENDED | EXPIRED
+    mode: str = CALL_MODE_VOIP                 # VOIP | GSM_FALLBACK
+    # Random room name for the VOIP leg. Unguessable, so knowing a request id is
+    # not enough to join a stranger's call.
+    room: str
+    # Set only once the GSM fallback fires. Returned to the pool on teardown.
+    proxy_number: Optional[str] = None
+    fallback_reason: Optional[str] = None
+    fallback_at: Optional[datetime] = None
+    fallback_count: int = 0
+    # Audit trail. Entries carry masked digits only — see app.masking.
+    events: List[dict] = []
+    expires_at: datetime
+    ended_at: Optional[datetime] = None
+    ended_reason: Optional[str] = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "call_sessions"
+
+
+class ProxyNumber(Document):
+    """One rentable GSM number in the masked-calling pool.
+
+    A collection rather than a config list because claiming one has to be
+    atomic: two families whose calls degrade in the same second must not be
+    handed the same number, or each would reach the other's donor. The claim is
+    a single conditional `find_one_and_update`, the same primitive the donor
+    lock uses.
+    """
+    number: str
+    in_use: bool = False
+    session_id: Optional[str] = None
+    claimed_at: Optional[datetime] = None
+    released_at: Optional[datetime] = None
+    lifetime_claims: int = 0
+
+    class Settings:
+        name = "proxy_numbers"
 
 
 class Escalation(Document):

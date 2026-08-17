@@ -103,6 +103,63 @@ RARE_SMS_ALERTS = os.getenv("RARE_SMS_ALERTS", "true").lower() in ("1", "true", 
 # happening to re-evaluate the dispatch.
 ESCALATION_SWEEP_SECONDS = _int("ESCALATION_SWEEP_SECONDS", 20)
 
+# ── Live En-Route Tracker (Module 3, Feature 1) ──────────────────────
+# How often the donor's phone is expected to post a fix while travelling.
+TRIP_PING_INTERVAL_SECONDS = _int("TRIP_PING_INTERVAL_SECONDS", 10)
+# Silence longer than this means the phone has lost its connection. It is a
+# multiple of the ping interval, not an independent guess: one dropped packet
+# on a Dhaka 3G cell must not flash "signal lost" at a family already panicking,
+# but four in a row is a real outage and saying nothing would be worse.
+TRIP_STALE_AFTER_SECONDS = _int("TRIP_STALE_AFTER_SECONDS", 45)
+# How often the server sweeps live trips for that silence. The freeze has to be
+# announced by the server on its own timer — a family whose *own* connection is
+# fine would otherwise sit watching a moving icon that stopped being real
+# minutes ago, because no event ever arrives to say so.
+TRIP_SWEEP_SECONDS = _int("TRIP_SWEEP_SECONDS", 5)
+# Within this many metres of the hospital the donor is treated as arrived.
+TRIP_ARRIVAL_RADIUS_M = _float("TRIP_ARRIVAL_RADIUS_M", 120.0)
+# Points kept for the drawn trail. A cap, because a document that grows without
+# one eventually stops being writable mid-trip.
+TRIP_TRAIL_MAX_POINTS = _int("TRIP_TRAIL_MAX_POINTS", 60)
+# Fallback speed for the first ETA, before enough movement exists to measure
+# one. Dhaka's average traffic speed, not a highway figure.
+TRIP_DEFAULT_SPEED_KMH = _float("TRIP_DEFAULT_SPEED_KMH", 18.0)
+# Measured speed is clamped into this band. Below the floor a donor stopped at
+# one light would produce an ETA of hours; above the ceiling one bad GPS jump
+# would promise an arrival that cannot happen.
+TRIP_MIN_SPEED_KMH = _float("TRIP_MIN_SPEED_KMH", 6.0)
+TRIP_MAX_SPEED_KMH = _float("TRIP_MAX_SPEED_KMH", 60.0)
+# A fix implying more than this is GPS drift or a spoof, not travel: it is
+# rejected rather than allowed to teleport the icon across the city.
+TRIP_IMPLAUSIBLE_SPEED_KMH = _float("TRIP_IMPLAUSIBLE_SPEED_KMH", 160.0)
+# Straight-line km → road km when the Maps API is not available. Dhaka's street
+# grid is not a straight line to anywhere.
+TRIP_ROAD_FACTOR = _float("TRIP_ROAD_FACTOR", 1.35)
+
+# ── Direct-Connect Masked Calling (Module 3, Feature 2) ──────────────
+# A call channel outlives neither the emergency nor the day. It is torn down on
+# arrival; this is the backstop for a request nobody ever closes.
+CALL_SESSION_TTL_MINUTES = _int("CALL_SESSION_TTL_MINUTES", 180)
+# VOIP quality floor. Below either of these for CALL_DEGRADED_SECONDS the
+# client stops waiting and asks the server for the GSM proxy leg.
+CALL_MIN_MOS = _float("CALL_MIN_MOS", 2.5)                  # 1.0–5.0, ITU scale
+CALL_MAX_PACKET_LOSS_PCT = _float("CALL_MAX_PACKET_LOSS_PCT", 8.0)
+CALL_DEGRADED_SECONDS = _int("CALL_DEGRADED_SECONDS", 5)
+# Pool of local GSM numbers the bridge can rent out. Each is lent to exactly one
+# live call, then returned — which is why the pool can be small and why a
+# released number's mapping stops resolving immediately.
+GSM_PROXY_NUMBERS = [
+    n.strip()
+    for n in os.getenv(
+        "GSM_PROXY_NUMBERS", "+8809612000101,+8809612000102,+8809612000103,+8809612000104"
+    ).split(",")
+    if n.strip()
+]
+# Telephony provider for the GSM leg (Twilio's proxy/voice API in production).
+# Unset means the bridge is simulated locally and says so.
+VOICE_BRIDGE_URL = os.getenv("VOICE_BRIDGE_URL")
+VOICE_BRIDGE_KEY = os.getenv("VOICE_BRIDGE_KEY")
+
 # ── OTP ──────────────────────────────────────────────────────────────
 OTP_TTL_SECONDS = _int("OTP_TTL_SECONDS", 300)
 OTP_MAX_ATTEMPTS = _int("OTP_MAX_ATTEMPTS", 5)
@@ -174,6 +231,19 @@ def public_config() -> dict:
             "rare_blood_types": sorted(RARE_BLOOD_TYPES),
             "rare_escalation_seconds": RARE_ESCALATION_SECONDS,
             "rare_sms_alerts": RARE_SMS_ALERTS,
+        },
+        "tracking": {
+            "ping_interval_seconds": TRIP_PING_INTERVAL_SECONDS,
+            "stale_after_seconds": TRIP_STALE_AFTER_SECONDS,
+            "arrival_radius_m": TRIP_ARRIVAL_RADIUS_M,
+            "trail_max_points": TRIP_TRAIL_MAX_POINTS,
+        },
+        "calling": {
+            "session_ttl_minutes": CALL_SESSION_TTL_MINUTES,
+            "min_mos": CALL_MIN_MOS,
+            "max_packet_loss_pct": CALL_MAX_PACKET_LOSS_PCT,
+            "degraded_seconds": CALL_DEGRADED_SECONDS,
+            "proxy_pool_size": len(GSM_PROXY_NUMBERS),
         },
         "otp": {"length": OTP_LENGTH, "ttl_seconds": OTP_TTL_SECONDS},
     }
