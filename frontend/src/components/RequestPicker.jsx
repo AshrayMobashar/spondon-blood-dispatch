@@ -79,7 +79,7 @@ export default function RequestPicker({
     } catch (err) {
       setError(err.message)
     }
-  }, [account?.id, account?.blood_type, role])
+  }, [account?.id, account?.blood_type, account?.eligible, role])
 
   useEffect(() => {
     load()
