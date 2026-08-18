@@ -14,6 +14,7 @@
  *  the way in.
  */
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Droplet, Hospital, Loader2, Navigation, Search } from 'lucide-react'
 import { requestApi } from '../lib/api.js'
 import { Badge, Button, Card, Field, Input, SectionHeader } from './ui.jsx'
@@ -38,6 +39,9 @@ export default function RequestPicker({
   // `rows` because they are a different offer: one is "resume a journey you
   // already committed to", the other is "commit to a new one".
   const [acceptable, setAcceptable] = useState([])
+  // Matching requests the donor cannot yet take — shown so they understand
+  // *why*, instead of tapping Accept and getting a bare server error.
+  const [locked, setLocked] = useState([])
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(null)
   const [draft, setDraft] = useState('')
@@ -58,9 +62,17 @@ export default function RequestPicker({
       )
       // Blood type is the one filter worth applying client-side: the server
       // will refuse a mismatch anyway, and offering a button that can only
-      // fail is worse than not offering it.
+      // fail is worse than not offering it. Eligibility gets the same
+      // treatment — a donor who is on cooldown or under the weight
+      // threshold should see *why* a request isn't tappable, not discover
+      // it only after the server's 403 comes back.
       setAcceptable(
         role === 'donor'
+          ? all.filter((r) => r.status === 'OPEN' && r.blood_type === account.blood_type && account.eligible)
+          : [],
+      )
+      setLocked(
+        role === 'donor' && !account.eligible
           ? all.filter((r) => r.status === 'OPEN' && r.blood_type === account.blood_type)
           : [],
       )
@@ -176,12 +188,57 @@ export default function RequestPicker({
         </div>
       )}
 
-      {role === 'donor' && rows && acceptable.length === 0 && (
+      {role === 'donor' && rows && acceptable.length === 0 && locked.length === 0 && (
         <p className="mt-4 text-[11px] leading-relaxed text-text-faint">
           There are no open {account?.blood_type} requests right now. A request only appears
           here if its blood type matches yours — that check is enforced by the server, not
           just hidden in this list.
         </p>
+      )}
+
+      {/* Matching requests the donor can't take yet — shown locked, with the
+          reason, instead of silently omitted or offered as a button that
+          would only fail server-side. */}
+      {role === 'donor' && locked.length > 0 && (
+        <div className="mt-6">
+          <p className="text-[10px] uppercase tracking-wide text-warning">
+            Matching your {account?.blood_type} — locked until you're eligible
+          </p>
+          <ul className="mt-3 space-y-2">
+            {locked.map((r) => (
+              <li
+                key={r.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-warning/20 bg-warning/5 px-4 py-3 opacity-70"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-semibold text-white">
+                    {r.patient_name}
+                  </p>
+                  <p className="mt-0.5 flex items-center gap-3 text-[11px] text-text-faint">
+                    <span className="inline-flex items-center gap-1">
+                      <Hospital className="size-3" />
+                      {r.hospital}
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <Droplet className="size-3" />
+                      {r.blood_type}
+                    </span>
+                  </p>
+                </div>
+                <Link
+                  to="/donor/eligibility"
+                  className="shrink-0 rounded-md border border-warning/30 px-3 py-1.5 text-[11px] font-semibold text-warning hover:bg-warning/10"
+                >
+                  Why?
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[10px] text-text-faint">
+            You're not currently eligible to donate — check your Eligibility page for the
+            cooldown or weight reason, then come back here.
+          </p>
+        </div>
       )}
 
       {rows && rows.length > 0 && (
