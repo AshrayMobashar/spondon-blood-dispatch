@@ -81,5 +81,54 @@ class DispatchFeed:
         room = request_id or CITY_FEED
         return len(self._rooms.get(room, ()))
 
+    # ── Private rooms (Live En-Route Tracker) ────────────────────────
+    #
+    # The radar's rule — zone names and counts, never a coordinate — is right
+    # for a public feed and wrong for the one screen that legitimately needs
+    # exact position: the family watching the donor who is bringing *their*
+    # blood. That is a different audience, so it gets a different pipe rather
+    # than a relaxation of the existing one.
+    #
+    # A private room is never joined by request id alone. `/ws/trip` verifies a
+    # bearer token and that the account is either the requester or the secured
+    # donor before calling `join_room`, and `emit_room` never copies to the city
+    # feed. The two channels cannot leak into each other by accident, because
+    # nothing in `emit` knows these rooms exist.
+
+    async def join_room(self, ws: WebSocket, room: str) -> str:
+        """Join an explicitly-named room. The caller has already authorised it."""
+        await ws.accept()
+        async with self._lock:
+            self._rooms.setdefault(room, set()).add(ws)
+        log.info("Private client joined %s (%d watching)", room, len(self._rooms[room]))
+        return room
+
+    async def emit_room(self, room: str, event: str, payload: dict) -> int:
+        """Send to exactly one room — no city-feed copy, ever."""
+        message = {"event": event, **payload}
+        async with self._lock:
+            targets = list(self._rooms.get(room, ()))
+
+        sent, dead = 0, []
+        for ws in targets:
+            try:
+                await ws.send_json(message)
+                sent += 1
+            except Exception:
+                dead.append(ws)
+        if dead:
+            async with self._lock:
+                watchers = self._rooms.get(room)
+                if watchers:
+                    watchers.difference_update(dead)
+                    if not watchers:
+                        self._rooms.pop(room, None)
+        return sent
+
+
+def trip_room(request_id: str) -> str:
+    """Room name for one request's private tracker feed."""
+    return f"trip:{request_id}"
+
 
 feed = DispatchFeed()

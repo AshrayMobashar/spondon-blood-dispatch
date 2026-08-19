@@ -15,6 +15,8 @@ student ID 23101184).
 | M2.2 — Concurrency Lock & Accountability | `app/routers/concurrency.py` |
 | M2.3 — Doctor's-Slip OCR verification | `app/routers/concurrency.py`, `app/integrations.py` |
 | Admin Role & Access Management (ban / shadow ban) | `app/routers/admin.py` |
+| M3.1 — Live En-Route Tracker | `app/tracking.py`, `app/routers/tracking.py` |
+| M3.2 — Direct-Connect Masked Calling | `app/masking.py`, `app/routers/calling.py` |
 
 Interactive reference: **`http://localhost:1184/docs`** (generated from the code, so it
 never goes stale). Narrative reference with samples → [`API_DOCS.md`](./API_DOCS.md).
@@ -87,12 +89,17 @@ backend/
     eligibility.py     # the cooldown / weight engine — sole writer of the flag
     dispatch.py        # gates → pool → reach → decision, plus escalation
     integrations.py    # SMS, FCM, OCR, Maps, blood-bank & NGO adapters
+    tracking.py        # ETA + signal-freshness maths (pure, no I/O)
+    masking.py         # number masking + atomic GSM proxy-number pool
+    realtime.py        # public radar feed + private per-trip rooms
     routers/
       auth.py          # OTP, registration, login, captured-request corner case
       donor_health.py  # eligibility, weight, donations, certificates
       smart_ping.py    # sleep mode, commute route, location, dispatch
       concurrency.py   # requests, slip OCR, atomic accept, arrivals, appeals
       admin.py         # console: ripples, slips, moderation, certs, escalations
+      tracking.py      # trip start / position / batch replay / arrival
+      calling.py       # masked call channel, GSM fallback, teardown
   requirements.txt
   .env.example
   seed_admin.py
@@ -100,3 +107,75 @@ backend/
   Spondon.postman_collection.json
   API_DOCS.md
 ```
+
+
+## Module 3 — the two live channels
+
+Both open automatically the moment a donor wins the concurrency lock, so the
+family's screen goes from "searching" to a working dashboard in one step.
+
+### M3.1 — Live En-Route Tracker
+
+`POST /api/requests/{id}/trip/location` from the donor's phone; the family reads
+`GET /api/requests/{id}/trip` or watches `ws://…/ws/trip?request_id=…&token=…`.
+
+Three rules govern every value it returns:
+
+* **Last known, never extrapolated.** The icon is drawn where the donor actually
+  was. Advancing it along a guessed heading would make the tracker most
+  confident exactly when it knows least.
+* **A stale ETA is frozen, not aged.** Once the phone goes quiet the ETA holds
+  its last value and is flagged. Note that `eta_at` — the absolute arrival
+  timestamp a client would count down to — is *withheld* while stale. Sending it
+  would let the browser reinvent the live tracking this state exists to deny.
+* **Reject before you trust.** A fix implying >160 km/h, or one recorded before
+  a fix already stored, is dropped rather than allowed to teleport the icon.
+
+**Corner case — the donor's phone loses its connection.** A background sweep
+(`TRIP_SWEEP_SECONDS`) notices silence beyond `TRIP_STALE_AFTER_SECONDS` and
+pushes `trip_signal_lost`. This has to be *pushed*: a family sitting on an open
+tracker makes no further requests once the socket goes quiet, so read-time
+staleness alone would leave a live-looking ETA on screen indefinitely. Only the
+transition is announced, so ten minutes out of coverage produces one banner.
+
+The other half of the same case is the reconnect: a phone that buffered fixes in
+an underpass flushes them to `/trip/batch`, which orders them by the phone's own
+`recorded_at` so the trail is redrawn along the road actually travelled.
+
+### M3.2 — Direct-Connect Masked Calling
+
+`POST /api/requests/{id}/call` opens a channel; `POST /api/calls/{id}/fallback`
+moves it to GSM.
+
+Neither party's number appears in the call session, its audit trail, or the
+server log — participants are stored as account ids, and real numbers are read
+from `Account` at dial time and discarded. A dump of `call_sessions` reveals who
+spoke to whom about which emergency and no way to ring either of them.
+
+**Corner case — VOIP fails on a weak in-building signal.** The client measures
+its own leg and, after `CALL_DEGRADED_SECONDS` below the quality floor, calls
+`/fallback`. The **same session** switches to a borrowed number from the pool —
+same id, same participants, same audit trail, so it is one conversation that
+changed transport rather than a new call. Both parties dial that number; the
+bridge routes by who is calling.
+
+Two details that matter:
+
+* The pool is a Mongo collection, claimed with a conditional
+  `find_one_and_update` — the same primitive as the donor lock. Two calls
+  degrading in the same second must not be handed the same number, or each
+  family reaches the other's donor.
+* Both clients detect the same bad network and both call `/fallback`. The second
+  is a no-op returning the existing number; otherwise the pool drains at two
+  numbers per call and the pair ends up on different lines.
+
+Numbers are returned to the pool on hang-up, on arrival, and on TTL expiry.
+
+### Not yet real
+
+The GSM leg is simulated unless `VOICE_BRIDGE_URL` is set — the number is
+allocated and reserved, but no call is placed, and the API says
+`"bridge": "simulated"` rather than implying otherwise. The frontend's VOIP
+quality meter is likewise a stand-in for `RTCPeerConnection.getStats()`, which
+needs a peer connection and a TURN server this build does not have. Everything
+else — sessions, authorisation, masking, allocation, fallback — is real.

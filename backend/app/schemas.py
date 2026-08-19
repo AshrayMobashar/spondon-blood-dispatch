@@ -96,10 +96,6 @@ class CertificateReview(BaseModel):
     action: str = Field(..., description="APPROVE | REJECT")
     note: Optional[str] = None
 
-class ProfileUpdate(BaseModel):
-    name: Optional[str] = None
-    address: Optional[str] = None
-
 
 # ── Feature 1 — Smart Ping ───────────────────────────────────────────
 class DonorCreate(BaseModel):
@@ -200,10 +196,6 @@ class AcceptBody(BaseModel):
     donor_id: str = Field(..., description="Donor tapping Accept")
 
 
-class DeclineBody(BaseModel):
-    donor_id: str = Field(..., description="Donor tapping Decline")
-
-
 class ArrivalBody(BaseModel):
     donor_id: str
     showed_up: bool = Field(..., examples=[False])
@@ -218,6 +210,51 @@ class AppealCreate(BaseModel):
 class AppealResolve(BaseModel):
     action: str = Field("CLEAR", description="CLEAR | REJECT")
     admin: str = Field("admin", examples=["admin.sadia"])
+
+
+# ── Feature 3.1 — Live En-Route Tracker ──────────────────────────────
+class TripPointIn(BaseModel):
+    """One GPS fix from a donor already on the way.
+
+    `recorded_at` is optional but matters: a phone that buffered fixes through a
+    dead zone should send the time each was *measured*, so the server can order
+    the flush correctly instead of drawing the trail in arrival order.
+    """
+    lat: float = Field(..., examples=[23.7806])
+    lng: float = Field(..., examples=[90.4074])
+    accuracy_m: Optional[float] = Field(None, examples=[12.0])
+    speed_kmh: Optional[float] = Field(None, examples=[24.0])
+    recorded_at: Optional[datetime] = Field(
+        None, description="When the phone took the fix. Defaults to now."
+    )
+
+
+class TripBatchIn(BaseModel):
+    """Fixes flushed together after a reconnect, oldest first."""
+    points: List[TripPointIn] = Field(..., min_length=1)
+
+
+# ── Feature 3.2 — Direct-Connect Masked Calling ──────────────────────
+class CallFallbackIn(BaseModel):
+    """Evidence that the VOIP leg is failing, sent when the client gives up on it.
+
+    The measurements are recorded so a fallback is auditable rather than a
+    mystery: a support question about why a call moved to GSM has an answer.
+    """
+    reason: str = Field(
+        "POOR_NETWORK",
+        description="POOR_NETWORK | NO_MEDIA | USER_REQUESTED",
+        examples=["POOR_NETWORK"],
+    )
+    mos: Optional[float] = Field(
+        None, ge=1.0, le=5.0, description="Measured call quality, ITU 1–5", examples=[1.9]
+    )
+    packet_loss_pct: Optional[float] = Field(None, ge=0.0, le=100.0, examples=[22.0])
+    rtt_ms: Optional[float] = Field(None, ge=0.0, examples=[840.0])
+
+
+class CallEndIn(BaseModel):
+    reason: str = Field("COMPLETED", description="COMPLETED | CANCELLED", examples=["COMPLETED"])
 
 
 # ── Admin console ────────────────────────────────────────────────────
