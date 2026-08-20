@@ -22,6 +22,15 @@ const iconWrap = {
 
 const toDateInput = (iso) => (iso ? new Date(iso).toISOString().slice(0, 10) : '')
 
+/** Today in the browser's own local date, so the picker's ceiling matches the
+ *  donor's calendar rather than UTC's. A donation is a past event — the engine
+ *  rejects a future date outright, so the input must not offer one. */
+const todayInput = () => {
+  const d = new Date()
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 10)
+}
+
 function SidebarToggle({ icon: Icon, title, sub, color, on, onChange, disabled }) {
   return (
     <div className="flex items-center justify-between rounded-xl border border-line bg-card p-4">
@@ -94,6 +103,10 @@ export default function UpdateRecords() {
     form.weight !== '' &&
     (weightNum < rules.plausible_weight_min_kg || weightNum > rules.plausible_weight_max_kg)
   const underweight = !implausible && weightNum > 0 && weightNum < rules.min_weight_kg
+  const today = todayInput()
+  // A manually typed date can still slip past the picker's `max`, so the flag
+  // is derived from the value itself and gates the submit button.
+  const futureDate = form.lastDonation !== '' && form.lastDonation > today
 
   async function save(e) {
     e.preventDefault()
@@ -259,8 +272,13 @@ export default function UpdateRecords() {
                   <Field label="Blood Type" hint="Contact an admin to change this">
                     <Input value={donor?.blood_type ?? ''} disabled />
                   </Field>
-                  <Field label="Last Donation Date">
-                    <Input type="date" value={form.lastDonation} onChange={set('lastDonation')} />
+                  <Field label="Last Donation Date" hint="Today or earlier — a donation is a past event">
+                    <Input
+                      type="date"
+                      value={form.lastDonation}
+                      onChange={set('lastDonation')}
+                      max={today}
+                    />
                   </Field>
                   <Field label="Donation Type">
                     <Select value={form.type} onChange={set('type')} disabled={!form.lastDonation}>
@@ -285,6 +303,13 @@ export default function UpdateRecords() {
                     saved weight of {weight ?? '—'} kg will be kept until you correct this.
                   </p>
                 )}
+                {futureDate && (
+                  <p className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-[11px] text-primary">
+                    <TriangleAlert className="size-3.5 shrink-0" />
+                    A donation date cannot be in the future — pick today or an earlier date.
+                    A forward-dated donation would arm a cooldown that has not started yet.
+                  </p>
+                )}
                 {underweight && (
                   <p className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-[11px] text-warning">
                     <TriangleAlert className="size-3.5 shrink-0" />
@@ -307,7 +332,7 @@ export default function UpdateRecords() {
                 )}
 
                 <div className="flex items-center gap-3">
-                  <Button type="submit" disabled={busy || implausible}>
+                  <Button type="submit" disabled={busy || implausible || futureDate}>
                     {busy && <Loader2 className="size-4 animate-spin" />} Save Records
                   </Button>
                   {saved && (
