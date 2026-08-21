@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { Activity, Clock, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Activity, Clock, CheckCircle2, XCircle, AlertCircle, Loader2 } from 'lucide-react'
 import Shell from '../../components/Shell.jsx'
-import { requestApi, donorApi, getAccount } from '../../lib/api.js'
+import { requestApi } from '../../lib/api.js'
+import { useSession } from '../../lib/session.js'
 
 export default function IncomingRequests() {
-  const navigate = useNavigate()
-  const account = getAccount()
+  // useSession owns the signed-out redirect and the role check for this page.
+  const { account, loading: sessionLoading, refresh } = useSession({ role: 'donor' })
   const [requests, setRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -17,25 +18,25 @@ export default function IncomingRequests() {
       setLoading(true)
       const data = await requestApi.incoming()
       setRequests(data)
+      setError('')
     } catch (err) {
-      if (err.status === 401) navigate('/auth')
+      // A dead token is the session's problem — refresh() clears it and the
+      // hook bounces us to /login.
+      if (err.status === 401) refresh()
       else setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [navigate])
+  }, [refresh])
 
   useEffect(() => {
-    if (!account) {
-      navigate('/auth')
-      return
-    }
+    if (!account) return
     loadRequests()
-    
+
     // Poll every 10 seconds to catch new dispatches
     const interval = setInterval(loadRequests, 10000)
     return () => clearInterval(interval)
-  }, [account, navigate, loadRequests])
+  }, [account, loadRequests])
 
   const handleAccept = async (reqId) => {
     setBusy(reqId)
@@ -65,6 +66,16 @@ export default function IncomingRequests() {
     } finally {
       setBusy('')
     }
+  }
+
+  if (sessionLoading && !account) {
+    return (
+      <Shell panel="DONOR" panelColor="donor">
+        <div className="flex items-center gap-2 py-20 text-sm text-text-muted">
+          <Loader2 className="size-4 animate-spin" /> Loading…
+        </div>
+      </Shell>
+    )
   }
 
   return (
