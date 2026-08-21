@@ -84,12 +84,6 @@ class AccountRegister(BaseModel):
     name: str = Field(..., examples=["Ashray Mobashar"])
     role: str = Field("donor", description="donor | patient")
     blood_type: str = Field(..., examples=["O+"])
-    university: Optional[str] = Field(
-        None,
-        description="Campus this donor scores for on the Varsity Node Leaderboard. "
-                    "Full name or short name; omit for a non-student.",
-        examples=["BRAC University"],
-    )
     fcm_token: Optional[str] = None
     health: Optional[HealthProfileIn] = None
 
@@ -146,13 +140,6 @@ class CertificateCreate(BaseModel):
 class CertificateReview(BaseModel):
     action: str = Field(..., description="APPROVE | REJECT")
     note: Optional[str] = None
-
-class ProfileUpdate(BaseModel):
-    name: Optional[str] = None
-    address: Optional[str] = None
-    university: Optional[str] = Field(
-        None, description='Varsity node to score for; "" leaves the node.'
-    )
 
 
 # ── Feature 1 — Smart Ping ───────────────────────────────────────────
@@ -254,10 +241,6 @@ class AcceptBody(BaseModel):
     donor_id: str = Field(..., description="Donor tapping Accept")
 
 
-class DeclineBody(BaseModel):
-    donor_id: str = Field(..., description="Donor tapping Decline")
-
-
 class ArrivalBody(BaseModel):
     donor_id: str
     showed_up: bool = Field(..., examples=[False])
@@ -356,3 +339,6 @@ class DonorPatch(BaseModel):
     name: Optional[str] = None
     blood_type: Optional[str] = None
     phone: Optional[str] = None
+
+class VehicleUpdate(BaseModel):
+    vehicle_type: str = Field(..., description="none | bike | car")

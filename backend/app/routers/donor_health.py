@@ -184,3 +184,14 @@ async def list_certificates(donor_id: str):
         MedicalCertificate.donor_id == donor_id
     ).sort(-MedicalCertificate.created_at).to_list()
     return [serialize(c) for c in certs]
+
+from ..schemas import VehicleUpdate
+
+@router.patch("/donors/{donor_id}/vehicle", summary="Update registered vehicle")
+async def update_vehicle(donor_id: str, body: VehicleUpdate):
+    donor = await _get_donor(donor_id)
+    donor.vehicle_type = body.vehicle_type.lower()
+    if donor.vehicle_type not in ["none", "bike", "car"]:
+        raise HTTPException(status_code=400, detail="vehicle_type must be none, bike, or car")
+    await donor.save()
+    return {"status": "ok", "vehicle_type": donor.vehicle_type}

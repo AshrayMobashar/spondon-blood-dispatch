@@ -160,46 +160,6 @@ GSM_PROXY_NUMBERS = [
 VOICE_BRIDGE_URL = os.getenv("VOICE_BRIDGE_URL")
 VOICE_BRIDGE_KEY = os.getenv("VOICE_BRIDGE_KEY")
 
-# ── The VOIP leg itself (WebRTC) ─────────────────────────────────────
-# The media never touches this server: the two browsers negotiate a peer
-# connection and the audio flows directly between them. All the backend lends
-# them is a signalling relay (`/ws/call`) and this list of ICE servers.
-#
-# STUN is free and public — it only tells a browser what its own public address
-# looks like from outside, so nothing private passes through it. That is enough
-# for the large majority of connections.
-#
-# TURN is the exception case: when both sides sit behind symmetric NAT (some
-# mobile carriers, hospital guest wifi) no direct path exists and the audio has
-# to be relayed. TURN relays cost bandwidth and so are not given away freely at
-# scale; leave these unset and calls simply fail on those networks — which is
-# exactly the corner case the GSM fallback below already exists to catch.
-STUN_SERVERS = [
-    s.strip()
-    for s in os.getenv(
-        "STUN_SERVERS",
-        "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302",
-    ).split(",")
-    if s.strip()
-]
-TURN_URLS = [u.strip() for u in os.getenv("TURN_URLS", "").split(",") if u.strip()]
-TURN_USERNAME = os.getenv("TURN_USERNAME")
-TURN_CREDENTIAL = os.getenv("TURN_CREDENTIAL")
-
-
-def ice_servers() -> list[dict]:
-    """RTCPeerConnection configuration handed to both participants."""
-    servers: list[dict] = []
-    if STUN_SERVERS:
-        servers.append({"urls": STUN_SERVERS})
-    if TURN_URLS:
-        servers.append({
-            "urls": TURN_URLS,
-            "username": TURN_USERNAME or "",
-            "credential": TURN_CREDENTIAL or "",
-        })
-    return servers
-
 # ── OTP ──────────────────────────────────────────────────────────────
 OTP_TTL_SECONDS = _int("OTP_TTL_SECONDS", 300)
 OTP_MAX_ATTEMPTS = _int("OTP_MAX_ATTEMPTS", 5)
@@ -225,12 +185,17 @@ TWILIO_FROM = os.getenv("TWILIO_FROM")               # e.g. +8801XXXXXXXXX
 FCM_SERVER_KEY = os.getenv("FCM_SERVER_KEY")         # Firebase Cloud Messaging
 FCM_ENDPOINT = os.getenv("FCM_ENDPOINT", "https://fcm.googleapis.com/fcm/send")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")         # doctor's-slip OCR
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")         # doctor's-slip OCR + CBC triage
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 # Below this confidence a slip cannot be auto-approved and goes to the human
 # review queue instead of being rejected.
 OCR_CONFIDENCE_THRESHOLD = _float("OCR_CONFIDENCE_THRESHOLD", 0.75)
+
+# ── CBC Triage (platelet-trend analysis) ─────────────────────────────
+# Minimum number of valid CBC uploads in a session before the AI issues a
+# HOLD_OFF or DISPATCH_NOW verdict. Fewer than this yields INCONCLUSIVE.
+CBC_MIN_REPORTS = _int("CBC_MIN_REPORTS", 2)
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")   # driving-route distance
 BLOOD_BANK_API_URL = os.getenv("BLOOD_BANK_API_URL")     # national registry
@@ -284,9 +249,7 @@ def public_config() -> dict:
             "max_packet_loss_pct": CALL_MAX_PACKET_LOSS_PCT,
             "degraded_seconds": CALL_DEGRADED_SECONDS,
             "proxy_pool_size": len(GSM_PROXY_NUMBERS),
-            "media": "webrtc",
-            "stun_servers": len(STUN_SERVERS),
-            "turn_configured": bool(TURN_URLS),
         },
         "otp": {"length": OTP_LENGTH, "ttl_seconds": OTP_TTL_SECONDS},
+        "cbc_triage": {"min_reports": CBC_MIN_REPORTS},
     }

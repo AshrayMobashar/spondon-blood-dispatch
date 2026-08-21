@@ -535,10 +535,10 @@ async def main() -> int:
         section("M3F1 — Live En-Route Tracker (+ dropped-connection corner case)")
 
         # A self-contained emergency: one family, one donor, one locked request.
-        fam = await register(c, phone_for(stamp, 2), name="Tracker Family",
+        fam = await register(c, phone_for(stamp, 8), name="Tracker Family",
                              role="patient", blood_type="B+")
         fam_h = {"Authorization": f"Bearer {fam['access_token']}"}
-        trk = await register(c, phone_for(stamp, 3), name="Tracker Donor", role="donor",
+        trk = await register(c, phone_for(stamp, 9), name="Tracker Donor", role="donor",
                              blood_type="B+", health={"weight_kg": 70})
         trk_id, trk_h = trk["account"]["id"], {"Authorization": f"Bearer {trk['access_token']}"}
 
@@ -666,8 +666,8 @@ async def main() -> int:
               fb["session_id"] == call["session_id"], str(fb)[:200])
         # The point of the whole feature: the number that comes back must not be
         # either participant's. Checked against the actual digits they registered.
-        donor_digits = phone_for(stamp, 3)[1:]     # drop the leading 0 for +880 form
-        family_digits = phone_for(stamp, 2)[1:]
+        donor_digits = phone_for(stamp, 9)[1:]     # drop the leading 0 for +880 form
+        family_digits = phone_for(stamp, 8)[1:]
         check("CC: the number handed out is the platform's, not a participant's",
               donor_digits not in fb["dial_number"]
               and family_digits not in fb["dial_number"],

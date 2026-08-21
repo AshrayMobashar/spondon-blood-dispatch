@@ -126,49 +126,9 @@ class DispatchFeed:
         return sent
 
 
-    def watcher_count_room(self, room: str) -> int:
-        """Members of an explicitly-named room (unlike `watcher_count`, which
-        treats its argument as a request id and falls back to the city feed)."""
-        return len(self._rooms.get(room, ()))
-
-    async def relay(self, room: str, sender: WebSocket, message: dict) -> int:
-        """Forward one client's message to the *other* members of a room.
-
-        This is the whole of the signalling server behind Direct-Connect calling.
-        SDP offers/answers and ICE candidates are opaque here on purpose: the
-        server copies them between two authorised sockets and reads nothing, so
-        the audio path is negotiated by the two browsers and never routed
-        through this process. Echoing back to the sender would have a caller
-        answer their own offer, so the sender is excluded.
-        """
-        async with self._lock:
-            targets = [ws for ws in self._rooms.get(room, ()) if ws is not sender]
-
-        sent, dead = 0, []
-        for ws in targets:
-            try:
-                await ws.send_json(message)
-                sent += 1
-            except Exception:
-                dead.append(ws)
-        if dead:
-            async with self._lock:
-                watchers = self._rooms.get(room)
-                if watchers:
-                    watchers.difference_update(dead)
-                    if not watchers:
-                        self._rooms.pop(room, None)
-        return sent
-
-
 def trip_room(request_id: str) -> str:
     """Room name for one request's private tracker feed."""
     return f"trip:{request_id}"
-
-
-def call_room(session_id: str) -> str:
-    """Signalling room for one call session — exactly two members, ever."""
-    return f"call:{session_id}"
 
 
 feed = DispatchFeed()
