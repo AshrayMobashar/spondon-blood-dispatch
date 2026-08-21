@@ -8,8 +8,6 @@ Collections, by the feature that owns them:
   Module 2.1 - BloodRequest.hospital_location (expanding geo-ripple)
   Module 2.2 - BloodRequest lock fields, Account.reliability, Appeal
   Module 2.3 - BloodRequest slip_* fields (doctor's-slip OCR)
-  Module 3.1 - University, Account.university, BloodRequest.secured_donor_university
-               / response_seconds / fulfilled_at (Varsity Node Leaderboard)
   Admin      - Admin, Account.status (ban / shadow ban)
 """
 from datetime import datetime, timezone
@@ -51,11 +49,6 @@ class CommuteRoute(BaseModel):
     `enabled` is a pause switch, not a delete: a donor who turns commute
     matching off keeps their segments and can turn it back on without retyping
     the route. Clearing the route entirely is a separate action.
-
-    `segments` (names) stay the single source of truth for *matching*; `points`
-    are the same route expressed as map coordinates, added so the donor's Leaflet
-    map can draw the actual line they travel. A route can carry names without
-    points (typed on the records page) or both (drawn on the map).
     """
     segments: List[str] = []             # named road segments on the daily route
     points: List[RoutePoint] = []        # optional map coordinates for those segments
@@ -191,12 +184,6 @@ class Account(Document):
     phone: Optional[str] = None
     phone_verified: bool = False
     fcm_token: Optional[str] = None
-    address: Optional[str] = None
-    # ── Module 3.1 — Varsity Node Leaderboard ──
-    # The student's campus, by University.name. Optional by design: a donor who
-    # is not a student simply never scores for anyone, and nothing else about
-    # their account behaves differently.
-    university: Optional[str] = None
     # ── Module 1.1 — eligibility ──
     health: HealthProfile = Field(default_factory=HealthProfile)
     eligibility: Eligibility = Field(default_factory=Eligibility)
@@ -204,6 +191,7 @@ class Account(Document):
     sleep_mode: SleepMode = Field(default_factory=SleepMode)
     commute_route: Optional[CommuteRoute] = None
     current_location: Optional[GeoPoint] = None
+    vehicle_type: str = "none"            # none | bike | car (for ride bounty)
     # ── Module 2.2 — accountability ──
     reliability: Reliability = Field(default_factory=Reliability)
     # ── Account moderation (admin-controlled) ──
@@ -226,6 +214,31 @@ class Account(Document):
 # Backwards-compatible alias — the same class, under its original name.
 Donor = Account
 
+# Ride Bounty states
+BOUNTY_OPEN = "OPEN"
+BOUNTY_ACCEPTED = "ACCEPTED"
+BOUNTY_PROMO_GENERATED = "PROMO_GENERATED"
+
+class RideBounty(Document):
+    """A community bounty generated when a donor completes a platelet donation.
+    Alerts nearby drivers to offer a free ride home. If no one accepts within
+    15 minutes, a digital promo code is automatically generated."""
+    request_id: str
+    donor_id: str
+    donor_name: str
+    hospital: str
+    hospital_location: GeoPoint
+    status: str = BOUNTY_OPEN
+    driver_id: Optional[str] = None
+    driver_name: Optional[str] = None
+    promo_code: Optional[str] = None
+    accepted_at: Optional[datetime] = None
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "ride_bounties"
+
 
 class BloodRequest(Document):
     patient_name: str
@@ -239,11 +252,7 @@ class BloodRequest(Document):
     status: str = "OPEN"                 # OPEN | LOCKED | FULFILLED | NO_SHOW
     secured_donor_id: Optional[str] = None
     secured_donor_name: Optional[str] = None
-    secured_donor_phone: Optional[str] = None
     secured_at: Optional[datetime] = None
-    # Donors who turned this one down — they keep the request out of their own
-    # feed without withdrawing it from anybody else's.
-    declined_by: List[str] = []
     # ── Requester link (for shadow-ban) ──
     requester_id: Optional[str] = None    # Account that submitted the request
     requester_name: Optional[str] = None
@@ -263,15 +272,6 @@ class BloodRequest(Document):
     slip_image_hash: Optional[str] = None  # SHA-256 hash for exact-duplicate prevention
     slip_reviewed_by: Optional[str] = None
     slip_reviewed_at: Optional[datetime] = None
-    # ── Varsity Node Leaderboard (Module 3, Feature 1) ──
-    # Both fields are stamped at accept time and never recomputed. The campus is
-    # copied rather than joined so a student transferring — or deleting their
-    # account — cannot silently rewrite a month that has already been published;
-    # `response_seconds` is the ping-to-acceptance gap that breaks a points tie,
-    # measured from the ping this donor actually received for this request.
-    secured_donor_university: Optional[str] = None
-    response_seconds: Optional[float] = None
-    fulfilled_at: Optional[datetime] = None   # arrival confirmed — the scoring event
     # ── Live En-Route Tracker ──
     # Embedded rather than a collection of its own: a request has at most one
     # live trip (only one donor can hold the lock), and keeping them in one
@@ -287,23 +287,6 @@ class BloodRequest(Document):
 
     class Settings:
         name = "requests"
-
-
-class University(Document):
-    """A campus that competes on the Varsity Node Leaderboard.
-
-    Kept as its own collection rather than inferred from the distinct
-    `Account.university` values, so a university that fielded no donors in a
-    given month still appears on the board (at the bottom, honestly at zero)
-    instead of vanishing from the competition entirely.
-    """
-    name: str                             # canonical, and what accounts store
-    short_name: str                       # BRACU, NSU, DU — the board's compact label
-    city: str = "Dhaka"
-    created_at: datetime = Field(default_factory=utcnow)
-
-    class Settings:
-        name = "universities"
 
 
 class Admin(Document):
@@ -474,3 +457,50 @@ class Escalation(Document):
 
     class Settings:
         name = "escalations"
+
+
+# ── CBC Triage (platelet-trend analysis) ────────────────────────────
+# Verdict constants.
+CBC_HOLD_OFF      = "HOLD_OFF"       # trend flat/rising → natural recovery
+CBC_DISPATCH_NOW  = "DISPATCH_NOW"   # trend strictly falling → counts collapsing
+CBC_INCONCLUSIVE  = "INCONCLUSIVE"   # not enough readable reports yet
+CBC_INVALID_IMAGE = "INVALID_IMAGE"  # uploaded image is not a CBC/lab report
+
+
+class CbcUpload(BaseModel):
+    """One photograph of a CBC report, as parsed by the AI.
+
+    `platelet_count` is None when the AI could not read the value (blurred,
+    folded, wrong page). That upload is stored for auditability but excluded
+    from the trend calculation.
+    """
+    image_hash: str                          # SHA-256 — duplicate guard
+    platelet_count: Optional[float] = None  # ×10³/µL as printed on the report
+    report_date: Optional[str] = None       # ISO 8601 date string on the form
+    patient_name: Optional[str] = None      # as read off this particular sheet
+    trend_at_upload: Optional[str] = None   # RISING | STABLE | FALLING | INSUFFICIENT_DATA
+    confidence: Optional[float] = None      # 0.0–1.0 from the AI
+    ai_notes: Optional[str] = None          # raw AI commentary
+    is_cbc_report: bool = True              # False = invalid image, halts processing
+    simulated: bool = False                 # True when no OpenAI key is configured
+    uploaded_at: datetime = Field(default_factory=utcnow)
+
+
+class CbcReport(Document):
+    """A triage session grouping successive CBC uploads for one patient.
+
+    The family uploads reports one at a time; after each upload the verdict is
+    recomputed from all valid readings in the session.  The session lives until
+    the family closes or a new one is started — there is no automatic expiry,
+    because a dengue patient's counts may need monitoring over several days.
+    """
+    patient_id: str                          # Account.id of the submitting user
+    uploads: List[CbcUpload] = []
+    verdict: str = CBC_INCONCLUSIVE          # current trend verdict
+    verdict_reason: Optional[str] = None     # AI-generated explanation
+    verdict_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "cbc_reports"
+

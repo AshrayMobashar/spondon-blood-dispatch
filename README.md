@@ -15,7 +15,6 @@ spondon-blood-dispatch/
 └── backend/         FastAPI + Beanie (MongoDB ODM) REST API
     ├── app/         models, routers, engines, integrations, security (JWT)
     ├── seed_admin.py
-    ├── seed_leaderboard.py
     ├── smoke_test.py
     └── postman/     Postman collection for the API
 ```
@@ -55,7 +54,6 @@ cp .env.example .env          # then edit if needed
 
 # 4. Seed demo data (admin account + sample donors & requests)
 python seed_admin.py
-python seed_leaderboard.py    # varsity nodes + 13 months of leaderboard history
 
 # 5. Run the API (port 1184)
 python -m app.main

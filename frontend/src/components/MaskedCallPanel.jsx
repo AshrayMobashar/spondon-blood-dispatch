@@ -1,67 +1,72 @@
 /** MaskedCallPanel — the temporary call channel between a family and their donor.
  *
- *  The media leg is real now. One side rings, the other sees an incoming call
- *  and answers, and from that moment the two browsers carry live audio directly
- *  between them over WebRTC — see `lib/voice.js` for how, and for why that needs
- *  no telephony vendor and costs nothing per minute.
+ *  Two things are happening here and it is worth keeping them apart.
  *
- *  Everything that made the channel *safe* is unchanged: the server still
- *  decides who may open it, neither party ever sees the other's number, and the
- *  quality watcher still hands a failing call to a GSM proxy number. What
- *  changed is that the watcher reads `RTCPeerConnection.getStats()` instead of a
- *  simulated signal bar, so the fallback now fires on the network the user
- *  actually has.
+ *  **The channel is real.** The session, the authorisation check, the number
+ *  masking and the atomic allocation of a GSM proxy number all live on the
+ *  server and work exactly as shipped.
  *
- *  The demo slider survives deliberately, as an *override*: a hospital basement
- *  is not reproducible from a desk, and the corner case still has to be
- *  demonstrable. It is labelled as a forced condition rather than presented as a
- *  measurement.
+ *  **The media leg is simulated.** Carrying actual voice needs a WebRTC peer
+ *  connection and a TURN server, which this build does not have. So the quality
+ *  meter below is driven by a simulated signal level rather than real
+ *  `RTCPeerConnection.getStats()`. The panel says so on screen rather than
+ *  implying a call is being carried.
+ *
+ *  What that simulation buys is the corner case, which is otherwise impossible
+ *  to demonstrate on a laptop: drag the signal down to what a basement hospital
+ *  corridor does to 3G, and the panel watches its own leg degrade, decides on
+ *  its own that VOIP is not going to recover, and hands the conversation to a
+ *  GSM proxy number without either party doing anything. Swapping the meter for
+ *  real getStats() output is a change to `sampleQuality` and nothing else.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Mic, MicOff, Phone, PhoneIncoming, PhoneOff, ShieldCheck,
-  SignalHigh, SignalLow, Wifi, WifiOff,
-} from 'lucide-react'
+import { Phone, PhoneOff, ShieldCheck, SignalHigh, SignalLow, Wifi, WifiOff } from 'lucide-react'
 import { callApi } from '../lib/api.js'
-import { PHASE, useVoiceCall } from '../lib/voice.js'
 import { Badge, Button, Card } from './ui.jsx'
 
-/** Forced impairment for the demo override — same shape a real sample has. */
-function forcedQuality(bars) {
+/* ── The simulated media leg ─────────────────────────────────────── */
+/**
+ * Turn a 0–5 signal-bar level into the call-quality numbers a real WebRTC
+ * stats read would give you. Deliberately noisy: a threshold that only fires on
+ * clean synthetic data is not a threshold that survives contact with a real
+ * network.
+ *
+ * Replace this with `pc.getStats()` when a real peer connection exists — the
+ * rest of the component only cares about the shape it returns.
+ */
+function sampleQuality(bars) {
   const jitter = () => (Math.random() - 0.5) * 0.6
   const mos = Math.max(1, Math.min(5, 1 + bars * 0.78 + jitter()))
   const packetLoss = Math.max(0, Math.min(100, (5 - bars) * 7 + Math.random() * 6))
   const rtt = 60 + (5 - bars) * 190 + Math.random() * 80
-  return {
-    mos: +mos.toFixed(2),
-    packet_loss_pct: +packetLoss.toFixed(1),
-    rtt_ms: Math.round(rtt),
-    forced: true,
-  }
+  return { mos: +mos.toFixed(2), packet_loss_pct: +packetLoss.toFixed(1), rtt_ms: Math.round(rtt) }
+}
+
+const STATE = {
+  IDLE: 'IDLE',
+  CONNECTING: 'CONNECTING',
+  IN_CALL: 'IN_CALL',
+  ENDED: 'ENDED',
 }
 
 export default function MaskedCallPanel({ requestId, role = 'family', peerName }) {
   const [session, setSession] = useState(null)
+  const [state, setState] = useState(STATE.IDLE)
   const [quality, setQuality] = useState(null)
-  const [bars, setBars] = useState(5)
-  const [forceDemo, setForceDemo] = useState(false)
+  const [bars, setBars] = useState(4)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
   const [switching, setSwitching] = useState(false)
 
-  // Consecutive bad samples. The fallback waits for a run of them: one bad
-  // second is a blip, and moving two people onto a different transport for it
-  // is worse than the stutter they would have heard.
+  // Consecutive bad samples. The fallback deliberately waits for a run of them:
+  // one bad second is a blip, and yanking two people onto a different transport
+  // for it is worse than the stutter they'd have heard.
   const badRun = useRef(0)
-  const forceRef = useRef({ on: false, bars: 5 })
-  forceRef.current = { on: forceDemo, bars }
+  const barsRef = useRef(bars)
+  barsRef.current = bars
 
   const floor = session?.quality_floor
   const onGsm = session?.mode === 'GSM_FALLBACK'
-  const sessionRef = useRef(session)
-  sessionRef.current = session
-  const switchingRef = useRef(switching)
-  switchingRef.current = switching
 
   /* ── Channel lifecycle ─────────────────────────────────────────── */
   const openChannel = useCallback(async () => {
@@ -78,135 +83,96 @@ export default function MaskedCallPanel({ requestId, role = 'family', peerName }
     }
   }, [requestId])
 
-  // Both sides open the channel on mount rather than on the call button. The
-  // receiving side has to be listening on the signalling socket *before* the
-  // other party rings — otherwise the ring lands nowhere and the patient never
-  // sees an incoming call at all.
   useEffect(() => {
     let alive = true
     callApi
       .get(requestId)
-      .then((s) => {
-        if (!alive) return
-        if (s?.session_id) setSession(s)
-        else openChannel()
-      })
+      .then((s) => alive && s?.session_id && setSession(s))
       .catch(() => {})
     return () => {
       alive = false
     }
-  }, [requestId, openChannel])
+  }, [requestId])
+
+  const startCall = async () => {
+    setState(STATE.CONNECTING)
+    badRun.current = 0
+    const s = session?.session_id ? session : await openChannel()
+    if (!s?.session_id) {
+      setState(STATE.IDLE)
+      return
+    }
+    setNotice(null)
+    setTimeout(() => setState(STATE.IN_CALL), 700)
+  }
+
+  const endCall = async () => {
+    setState(STATE.ENDED)
+    setQuality(null)
+    if (session?.session_id) {
+      try {
+        await callApi.end(session.session_id, 'COMPLETED')
+      } catch {
+        /* the channel expires on its own; a failed hang-up must not stick */
+      }
+    }
+    setSession((s) => (s ? { ...s, status: 'ENDED', room: null } : s))
+  }
 
   /* ── The corner case: watch our own leg, and act on it ─────────── */
-  const escalateToGsm = useCallback(async (evidence, reason) => {
-    const live = sessionRef.current
-    if (!live?.session_id || switchingRef.current) return
-    setSwitching(true)
-    try {
-      const updated = await callApi.fallback(live.session_id, {
-        reason,
-        mos: evidence?.mos,
-        packet_loss_pct: evidence?.packet_loss_pct,
-        rtt_ms: evidence?.rtt_ms,
-      })
-      setSession(updated)
-      setNotice(
-        updated.reused
-          ? 'Already on the backup phone line.'
-          : 'Internet call quality was too poor — the call moved to a temporary phone line.',
-      )
-    } catch (err) {
-      // Pool exhausted, or the server refused. Say so plainly: telling someone
-      // to keep struggling with a leg that is already failing is useless, but
-      // so is pretending a number was allocated.
-      setError(err.message)
-    } finally {
-      setSwitching(false)
-      badRun.current = 0
-    }
-  }, [])
+  const escalateToGsm = useCallback(
+    async (evidence, reason) => {
+      if (!session?.session_id || switching) return
+      setSwitching(true)
+      try {
+        const updated = await callApi.fallback(session.session_id, { reason, ...evidence })
+        setSession(updated)
+        setNotice(
+          updated.reused
+            ? 'Already on the backup phone line.'
+            : 'Internet call quality was too poor — the call moved to a temporary phone line.',
+        )
+      } catch (err) {
+        // Pool exhausted, or the server refused. Say so plainly: telling
+        // someone to keep struggling with a leg that is already failing is
+        // useless, but so is pretending a number was allocated.
+        setError(err.message)
+      } finally {
+        setSwitching(false)
+        badRun.current = 0
+      }
+    },
+    [session, switching],
+  )
 
-  /** One sample from the live peer connection, once per second. */
-  const handleQuality = useCallback(
-    (sample) => {
-      const q = forceRef.current.on ? forcedQuality(forceRef.current.bars) : sample
+  useEffect(() => {
+    if (state !== STATE.IN_CALL || !floor) return undefined
+
+    const timer = setInterval(() => {
+      const q = sampleQuality(barsRef.current)
       setQuality(q)
 
       // Once we are on GSM the media leg no longer matters — the conversation
       // is riding the carrier's voice network, not this one.
-      if (sessionRef.current?.mode === 'GSM_FALLBACK') return
+      if (onGsm) return
 
-      const limits = sessionRef.current?.quality_floor
-      if (!limits) return
-
-      if (q.failed) {
-        escalateToGsm(q, 'NO_MEDIA')
-        return
-      }
-
-      // Silence counts as failure. A stalled connection reports flawless
-      // numbers precisely because nothing is arriving to be lost.
-      const bad =
-        q.silent || q.mos < limits.min_mos || q.packet_loss_pct > limits.max_packet_loss_pct
+      const bad = q.mos < floor.min_mos || q.packet_loss_pct > floor.max_packet_loss_pct
       badRun.current = bad ? badRun.current + 1 : 0
-      if (badRun.current >= limits.degraded_seconds) {
-        escalateToGsm(q, q.silent ? 'NO_MEDIA' : 'POOR_NETWORK')
-      }
-    },
-    [escalateToGsm],
-  )
 
-  const voice = useVoiceCall({
-    session,
-    onQuality: handleQuality,
-    onPeerHangup: () => {
-      setNotice('The call ended.')
-      setQuality(null)
-      badRun.current = 0
-    },
-  })
+      if (badRun.current >= floor.degraded_seconds) {
+        escalateToGsm(q, 'POOR_NETWORK')
+      }
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [state, floor, onGsm, escalateToGsm])
 
   /* ── Render ────────────────────────────────────────────────────── */
-  const { phase } = voice
-  const inCall = phase === PHASE.IN_CALL
-  const ringingIn = phase === PHASE.RINGING_IN
-  const ringingOut = phase === PHASE.RINGING_OUT
-  const connecting = phase === PHASE.CONNECTING
+  const inCall = state === STATE.IN_CALL
   const label = peerName || session?.peer_label || (role === 'family' ? 'Donor' : 'Family')
-  const peerWord = role === 'family' ? 'donor' : 'family'
-
-  const startCall = () => {
-    setNotice(null)
-    setError(null)
-    voice.ring()
-  }
-
-  const endCall = async () => {
-    voice.hangup()
-    setQuality(null)
-    badRun.current = 0
-    // On a VOIP call the channel is deliberately left open: a dropped call is
-    // very often re-dialled within seconds, and re-provisioning would make the
-    // second attempt slower than the first for no gain. It closes on arrival,
-    // or on its TTL.
-    //
-    // A GSM leg is the exception. It is holding a number from a small shared
-    // pool, and a number nobody hands back is a line another family cannot get.
-    if (!sessionRef.current?.session_id || sessionRef.current.mode !== 'GSM_FALLBACK') return
-    try {
-      await callApi.end(sessionRef.current.session_id, 'COMPLETED')
-      setSession((s) => (s ? { ...s, status: 'ENDED', mode: 'VOIP', dial_number: null } : s))
-    } catch {
-      /* the channel expires on its own; a failed hang-up must not stick */
-    }
-  }
 
   return (
     <Card className="p-5">
-      {/* Remote audio sink — hidden, but it is the element that actually makes
-          the other person audible. */}
-      <audio ref={voice.remoteAudioRef} autoPlay playsInline className="hidden" />
-
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-text-faint">
@@ -221,7 +187,7 @@ export default function MaskedCallPanel({ requestId, role = 'family', peerName }
           </p>
         </div>
         <Badge color={onGsm ? 'warning' : 'success'}>
-          {onGsm ? 'Phone line' : inCall ? 'Live · internet call' : 'Internet call'}
+          {onGsm ? 'Phone line' : 'Internet call'}
         </Badge>
       </div>
 
@@ -231,82 +197,34 @@ export default function MaskedCallPanel({ requestId, role = 'family', peerName }
         </p>
       )}
 
-      {session?.session_id && !inCall && !ringingIn && !connecting && (
-        <p className="mt-3 text-[11px] text-text-faint">
-          {voice.peerPresent
-            ? `${label} has this screen open — they will see it ring.`
-            : `${label} is not on their tracker screen right now. Ring anyway, or switch to the phone line.`}
-        </p>
-      )}
-
-      {/* ── Incoming call ── */}
-      {ringingIn && (
-        <div className="mt-4 animate-pulse rounded-lg border border-success/40 bg-success/10 p-4">
-          <p className="flex items-center gap-2 text-[11px] font-semibold text-success">
-            <PhoneIncoming className="size-4" />
-            {label} is calling you
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="success" onClick={voice.accept}>
-              <Phone className="size-4" />
-              Answer
-            </Button>
-            <Button
-              variant="primary"
-              className="!bg-gradient-to-r !from-rose-600 !to-rose-700"
-              onClick={voice.reject}
-            >
-              <PhoneOff className="size-4" />
-              Decline
-            </Button>
-          </div>
-        </div>
-      )}
-
       {/* ── Call controls ── */}
-      {!ringingIn && (
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          {!inCall && !ringingOut && !connecting ? (
-            <Button variant="success" onClick={startCall} disabled={!session?.session_id}>
-              <Phone className="size-4" />
-              Call {peerWord}
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              onClick={endCall}
-              className="!bg-gradient-to-r !from-rose-600 !to-rose-700"
-            >
-              <PhoneOff className="size-4" />
-              {inCall ? 'End call' : 'Cancel'}
-            </Button>
-          )}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {!inCall ? (
+          <Button variant="success" onClick={startCall} disabled={state === STATE.CONNECTING}>
+            <Phone className="size-4" />
+            {state === STATE.CONNECTING ? 'Connecting…' : `Call ${role === 'family' ? 'donor' : 'family'}`}
+          </Button>
+        ) : (
+          <Button
+            variant="primary"
+            onClick={endCall}
+            className="!bg-gradient-to-r !from-rose-600 !to-rose-700"
+          >
+            <PhoneOff className="size-4" />
+            End call
+          </Button>
+        )}
 
-          {inCall && (
-            <Button variant="ghost" onClick={voice.toggleMute}>
-              {voice.muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
-              {voice.muted ? 'Unmute' : 'Mute'}
-            </Button>
-          )}
-
-          {(inCall || ringingOut) && !onGsm && (
-            <Button
-              variant="ghost"
-              onClick={() => escalateToGsm(quality || {}, 'USER_REQUESTED')}
-              disabled={switching}
-            >
-              {switching ? 'Switching…' : 'Switch to phone line'}
-            </Button>
-          )}
-        </div>
-      )}
-
-      {ringingOut && (
-        <p className="mt-3 text-[11px] text-text-faint">
-          Ringing {peerWord}… an incoming call is showing on their screen.
-        </p>
-      )}
-      {connecting && <p className="mt-3 text-[11px] text-text-faint">Connecting audio…</p>}
+        {inCall && !onGsm && (
+          <Button
+            variant="ghost"
+            onClick={() => escalateToGsm(quality || {}, 'USER_REQUESTED')}
+            disabled={switching}
+          >
+            {switching ? 'Switching…' : 'Switch to phone line'}
+          </Button>
+        )}
+      </div>
 
       {/* ── The GSM fallback, once it has fired ── */}
       {onGsm && session?.dial_number && (
@@ -323,8 +241,6 @@ export default function MaskedCallPanel({ requestId, role = 'family', peerName }
             not to either of you, and it stops working the moment this request is closed.
             {session.fallback_reason === 'POOR_NETWORK' &&
               ' The switch happened automatically — the internet call was failing.'}
-            {session.fallback_reason === 'NO_MEDIA' &&
-              ' The switch happened automatically — no audio path could be established.'}
           </p>
           {session.bridge === 'simulated' && (
             <p className="mt-2 text-[10px] text-text-faint">
@@ -336,11 +252,9 @@ export default function MaskedCallPanel({ requestId, role = 'family', peerName }
       )}
 
       {notice && <p className="mt-3 text-[11px] text-success">{notice}</p>}
-      {(error || voice.error) && (
-        <p className="mt-3 text-[11px] text-primary">{error || voice.error}</p>
-      )}
+      {error && <p className="mt-3 text-[11px] text-primary">{error}</p>}
 
-      {/* ── Live quality meter — measured, not simulated ── */}
+      {/* ── Live quality meter ── */}
       {inCall && quality && (
         <div className="mt-4 space-y-2 rounded-lg border border-line bg-ink/40 p-3">
           <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-text-faint">
@@ -350,7 +264,7 @@ export default function MaskedCallPanel({ requestId, role = 'family', peerName }
               ) : (
                 <SignalLow className="size-3.5 text-warning" />
               )}
-              Call quality{quality.forced ? ' · forced' : ''}
+              Call quality
             </span>
             <span>{onGsm ? 'GSM leg — not measured' : `MOS ${quality.mos}`}</span>
           </div>
@@ -373,34 +287,27 @@ export default function MaskedCallPanel({ requestId, role = 'family', peerName }
         </div>
       )}
 
-      {/* ── Demo override ── */}
+      {/* ── Demo control ── */}
       <div className="mt-4 rounded-lg border border-dashed border-line/70 bg-ink/30 p-3">
         <label className="flex items-center justify-between text-[10px] uppercase tracking-wide text-text-faint">
           <span className="flex items-center gap-1.5">
-            {forceDemo ? <WifiOff className="size-3.5" /> : <Wifi className="size-3.5" />}
-            Force poor network (demo)
+            {bars > 2 ? <Wifi className="size-3.5" /> : <WifiOff className="size-3.5" />}
+            Simulated signal strength
           </span>
-          <input
-            type="checkbox"
-            checked={forceDemo}
-            onChange={(e) => setForceDemo(e.target.checked)}
-            className="accent-primary"
-          />
+          <span>{bars}/5</span>
         </label>
-        {forceDemo && (
-          <>
-            <input
-              type="range" min={0} max={5} step={1} value={bars}
-              onChange={(e) => setBars(Number(e.target.value))}
-              className="mt-2 w-full accent-primary"
-            />
-            <p className="mt-1 text-[10px] text-text-faint">Forced signal {bars}/5</p>
-          </>
-        )}
+        <input
+          type="range"
+          min={0}
+          max={5}
+          step={1}
+          value={bars}
+          onChange={(e) => setBars(Number(e.target.value))}
+          className="mt-2 w-full accent-primary"
+        />
         <p className="mt-1.5 text-[10px] leading-relaxed text-text-faint">
-          Off, the meter reads the real peer connection. On, it overrides those readings so the
-          hospital-basement fallback can be reproduced from a desk — drop it to 0–1 during a live
-          call and watch the switch fire on its own.
+          Stands in for a real WebRTC stats feed. Drop it to 0–1 during a call to reproduce a
+          hospital basement and watch the fallback fire on its own.
         </p>
       </div>
     </Card>

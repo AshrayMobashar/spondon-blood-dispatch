@@ -70,11 +70,6 @@ def _public_session(session: CallSession, *, peer_label: str,
             "degraded_seconds": config.CALL_DEGRADED_SECONDS,
         },
         "bridge": "live" if masking.voice_bridge_configured() else "simulated",
-        # The VOIP leg is a real WebRTC peer connection between the two
-        # browsers. These are the servers it uses to find a path through NAT;
-        # the audio itself never reaches Spondon.
-        "ice_servers": config.ice_servers(),
-        "turn_configured": bool(config.TURN_URLS),
     }
 
 
@@ -94,23 +89,6 @@ async def _authorise(request_id: str, account: Account) -> tuple[BloodRequest, s
         detail="Only the family who opened this request and the donor who accepted it "
                "can use its call channel.",
     )
-
-
-async def authorise_session(session_id: str, account: Account
-                           ) -> tuple[CallSession, BloodRequest, str]:
-    """Same participant check as the REST routes, for the signalling socket.
-
-    The socket carries the live audio negotiation, so it cannot be a softer
-    gate than the endpoint that opened the channel: a third party who learned a
-    session id must not be able to join the room and answer the offer.
-    """
-    session = await CallSession.get(to_oid(session_id))
-    if not session:
-        raise HTTPException(status_code=404, detail="Call session not found")
-    if session.status != CALL_ACTIVE:
-        raise HTTPException(status_code=409, detail=f"Call session is {session.status}.")
-    req, role = await _authorise(session.request_id, account)
-    return session, req, role
 
 
 async def _peer_view(session: CallSession, req: BloodRequest, role: str) -> dict:

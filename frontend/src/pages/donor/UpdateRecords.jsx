@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ClipboardEdit, Moon, Navigation, BellOff, CheckCircle2, Sparkles,
-  TriangleAlert, Loader2, MapPin,
+  TriangleAlert, Loader2, MapPin, Car
 } from 'lucide-react'
 import Shell from '../../components/Shell.jsx'
 import { DonorChips } from '../../components/RoleChips.jsx'
@@ -236,10 +236,16 @@ export default function UpdateRecords() {
             staleAfterMin={staleAfterMin}
             onSaved={load}
           />
+          
+          <VehicleCard
+            donorId={account?.id}
+            initialType={donor?.vehicle_type ?? 'none'}
+            onSaved={load}
+          />
         </aside>
 
-        {/* Main */}
-        <section className="min-w-0 flex-1">
+        {/* Main Content Area */}
+        <div className="min-w-0 flex-1 space-y-4">
           <Tabs
             tabs={tabs}
             active={tab}
@@ -352,7 +358,7 @@ export default function UpdateRecords() {
 
             <RecordDonation donorId={account?.id} rules={rules} onDone={load} />
           </div>
-        </section>
+        </div>
       </div>
     </Shell>
   )
@@ -505,6 +511,58 @@ function Stat({ k, v, c }) {
     <div>
       <p className={`text-sm font-bold ${c}`}>{v}</p>
       <p className="text-[10px] text-text-faint">{k}</p>
+    </div>
+  )
+}
+
+
+function VehicleCard({ donorId, initialType, onSaved }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  
+  const saveType = async (type) => {
+    if (!donorId || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await donorApi.updateVehicle(donorId, type)
+      onSaved?.()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-line bg-card p-4 mt-4">
+      <div className="flex items-center gap-3">
+        <span className="grid size-7 place-items-center rounded-lg bg-primary/10 text-primary">
+          <Car className="size-3.5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold">Registered Vehicle</p>
+          <p className="text-[10px] text-text-faint">
+            Offer rides to completed donors
+          </p>
+        </div>
+      </div>
+      {error && (
+        <p className="mt-2 flex items-center gap-1.5 text-[10px] text-primary">
+          <TriangleAlert className="size-3 shrink-0" /> {error}
+        </p>
+      )}
+      <div className="mt-3">
+        <Select 
+          value={initialType} 
+          onChange={(e) => saveType(e.target.value)}
+          disabled={busy}
+        >
+          <option value="none">None</option>
+          <option value="bike">Bike</option>
+          <option value="car">Car</option>
+        </Select>
+      </div>
     </div>
   )
 }

@@ -10,9 +10,9 @@ import {
   Radio,
   Lock,
   Activity,
+  ActivitySquare,
   Droplet,
   Siren,
-  Trophy,
   Navigation,
   PhoneCall,
 } from 'lucide-react'
@@ -23,9 +23,6 @@ export const routeGroups = [
     label: 'General',
     items: [
       { to: '/', label: 'Home / Landing', icon: Home },
-      // Public: donors, patients and visitors all read the same board, so it
-      // sits in General rather than under a role.
-      { to: '/leaderboard', label: 'View Leaderboard', icon: Trophy },
       { to: '/login', label: 'Login', icon: LogIn },
       { to: '/register', label: 'Register', icon: UserPlus },
     ],
@@ -36,6 +33,7 @@ export const routeGroups = [
     items: [
       { to: '/register/patient', label: 'Patient Sign-up', icon: UserPlus },
       { to: '/patient/ocr', label: "Doctor's Slip OCR", icon: FileText },
+      { to: '/patient/cbc-triage', label: 'CBC Report Triage', icon: ActivitySquare },
       { to: '/patient/track', label: 'Live En-Route Tracker', icon: Navigation },
     ],
   },
