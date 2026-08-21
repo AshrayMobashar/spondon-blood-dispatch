@@ -17,6 +17,7 @@ import EnRoute from './pages/donor/EnRoute.jsx'
 import DonorProfile from './pages/donor/DonorProfile.jsx'
 import GoldenDonor from './pages/donor/GoldenDonor.jsx'
 import IncomingRequests from './pages/donor/IncomingRequests.jsx'
+import RideBounties from './pages/donor/RideBounties.jsx'
 import Ashray3 from './pages/Ashray3.jsx'
 import GeoRipple from './pages/admin/GeoRipple.jsx'
 import PingLog from './pages/admin/PingLog.jsx'
@@ -57,6 +58,7 @@ function App() {
       <Route path="/donor/requests" element={<IncomingRequests />} />
       <Route path="/donor/en-route" element={<EnRoute />} />
       <Route path="/donor/en-route/:requestId" element={<EnRoute />} />
+      <Route path="/donor/bounties" element={<RideBounties />} />
 
       {/* Admin console (real backend + JWT) */}
       <Route path="/admin" element={<AdminConsole />} />
