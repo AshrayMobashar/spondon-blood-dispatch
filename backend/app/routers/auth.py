@@ -19,11 +19,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from .. import config, integrations
 from ..dispatch import run_dispatch
 from ..eligibility import recalculate, summary, weight_is_plausible
+from ..leaderboard import resolve_university
 from ..models import (
     Account, BloodRequest, GeoPoint, HealthProfile, OtpChallenge,
     ROLE_DONOR, ROLE_PATIENT, BANNED, utcnow,
 )
-from ..schemas import AccountRegister, OtpRequest, OtpVerify
+from ..schemas import AccountRegister, OtpRequest, OtpVerify, ProfileUpdate
 from ..security import (
     generate_otp, hash_otp, otp_matches, issue_user_token, get_current_account,
     issue_registration_ticket, phone_from_registration_ticket,
@@ -42,6 +43,8 @@ def _account_public(account: Account) -> dict:
         "phone": account.phone,
         "phone_verified": account.phone_verified,
         "status": account.status,
+        "address": account.address,
+        "university": account.university,
         # A shadow-banned user must see exactly what an ordinary user sees.
         "eligible": account.eligibility.eligible,
         # Where the client should land after signing in — a patient must never
@@ -273,6 +276,9 @@ async def register(body: AccountRegister):
         phone_verified=True,
         fcm_token=body.fcm_token,
         health=health,
+        # Only a donor can score for a campus, so a patient who sends one is
+        # simply not enrolled rather than being refused the account.
+        university=await resolve_university(body.university) if role == ROLE_DONOR else None,
         last_login_at=utcnow(),
     )
     recalculate(account)
@@ -290,6 +296,20 @@ async def register(body: AccountRegister):
 # ── Session ──────────────────────────────────────────────────────────
 @router.get("/me", summary="The signed-in account")
 async def me(account: Account = Depends(get_current_account)):
+    return {
+        "account": _account_public(account),
+        "eligibility": summary(account) if account.is_donor else None,
+    }
+
+@router.patch("/me", summary="Update the signed-in account profile")
+async def update_me(body: ProfileUpdate, account: Account = Depends(get_current_account)):
+    if body.name is not None:
+        account.name = body.name.strip()
+    if body.address is not None:
+        account.address = body.address.strip()
+    if body.university is not None:
+        account.university = await resolve_university(body.university)
+    await account.save()
     return {
         "account": _account_public(account),
         "eligibility": summary(account) if account.is_donor else None,

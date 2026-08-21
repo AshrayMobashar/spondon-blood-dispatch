@@ -136,6 +136,9 @@ export const authApi = {
   register: (payload) =>
     request('/auth/register', { method: 'POST', auth: false, body: payload }),
   me: () => request('/auth/me', { auth: 'user' }),
+  /** Restored alongside `requestApi.incoming` — DonorProfile.jsx calls this and
+   *  the wholesale upload on main removed it. */
+  updateProfile: (payload) => request('/auth/me', { method: 'PATCH', auth: 'user', body: payload }),
 }
 
 /* ── Donor ───────────────────────────────────────────────────────── */
@@ -192,6 +195,11 @@ export const donorApi = {
 export const requestApi = {
   create: (body) => request('/requests', { method: 'POST', auth: 'user', body }),
   list: () => request('/requests', { auth: false }),
+  /** The signed-in donor's own active pings — what the Incoming Requests feed
+   *  renders. Restored here: a wholesale file upload on main dropped it while
+   *  the page that calls it stayed, so the feed was calling a method that no
+   *  longer existed. */
+  incoming: () => request('/requests/incoming', { auth: 'user' }),
   get: (id) => request(`/requests/${id}`, { auth: false }),
   uploadSlip: (id, image, mime) =>
     request(`/requests/${id}/slip`, { method: 'POST', auth: 'user', body: { image, mime } }),
@@ -207,6 +215,10 @@ export const requestApi = {
     request(`/requests/${id}/accept`, {
       method: 'POST', auth: 'user', body: { donor_id: donorId },
     }),
+  decline: (id, donorId) =>
+    request(`/requests/${id}/decline`, {
+      method: 'POST', auth: 'user', body: { donor_id: donorId },
+    }),
   arrival: (id, donorId, showedUp) =>
     request(`/requests/${id}/arrival`, {
       method: 'POST', auth: 'user', body: { donor_id: donorId, showed_up: showedUp },
@@ -217,6 +229,27 @@ export const requestApi = {
     }),
   pingLogs: (requestId) =>
     request(`/ping-logs${requestId ? `?request_id=${requestId}` : ''}`, { auth: false }),
+}
+
+/* ── Varsity Node Leaderboard ────────────────────────────────────── */
+/** Public and unauthenticated — the board is meant to be readable by donors,
+ *  patients and passers-by alike, so none of these calls carry a session. */
+export const leaderboardApi = {
+  /** The 12 months the API publishes, ending with the one in progress. The
+   *  month picker is built from this rather than from the device clock, so a
+   *  wrong phone date can never offer a month that does not exist yet. */
+  months: () => request('/leaderboard/months', { auth: false }),
+  /** `month` is 'YYYY-MM'; omit it for the month in progress. */
+  board: (month) =>
+    request(`/leaderboard${month ? `?month=${encodeURIComponent(month)}` : ''}`, {
+      auth: false,
+    }),
+  universities: () => request('/leaderboard/universities', { auth: false }),
+  campus: (name, month) =>
+    request(
+      `/leaderboard/${encodeURIComponent(name)}${month ? `?month=${encodeURIComponent(month)}` : ''}`,
+      { auth: false },
+    ),
 }
 
 /* ── Live En-Route Tracker ───────────────────────────────────────── */

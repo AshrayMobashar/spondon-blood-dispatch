@@ -8,6 +8,8 @@ Collections, by the feature that owns them:
   Module 2.1 - BloodRequest.hospital_location (expanding geo-ripple)
   Module 2.2 - BloodRequest lock fields, Account.reliability, Appeal
   Module 2.3 - BloodRequest slip_* fields (doctor's-slip OCR)
+  Module 3.1 - University, Account.university, BloodRequest.secured_donor_university
+               / response_seconds / fulfilled_at (Varsity Node Leaderboard)
   Admin      - Admin, Account.status (ban / shadow ban)
 """
 from datetime import datetime, timezone
@@ -49,6 +51,11 @@ class CommuteRoute(BaseModel):
     `enabled` is a pause switch, not a delete: a donor who turns commute
     matching off keeps their segments and can turn it back on without retyping
     the route. Clearing the route entirely is a separate action.
+
+    `segments` (names) stay the single source of truth for *matching*; `points`
+    are the same route expressed as map coordinates, added so the donor's Leaflet
+    map can draw the actual line they travel. A route can carry names without
+    points (typed on the records page) or both (drawn on the map).
     """
     segments: List[str] = []             # named road segments on the daily route
     points: List[RoutePoint] = []        # optional map coordinates for those segments
@@ -184,6 +191,12 @@ class Account(Document):
     phone: Optional[str] = None
     phone_verified: bool = False
     fcm_token: Optional[str] = None
+    address: Optional[str] = None
+    # ── Module 3.1 — Varsity Node Leaderboard ──
+    # The student's campus, by University.name. Optional by design: a donor who
+    # is not a student simply never scores for anyone, and nothing else about
+    # their account behaves differently.
+    university: Optional[str] = None
     # ── Module 1.1 — eligibility ──
     health: HealthProfile = Field(default_factory=HealthProfile)
     eligibility: Eligibility = Field(default_factory=Eligibility)
@@ -226,7 +239,11 @@ class BloodRequest(Document):
     status: str = "OPEN"                 # OPEN | LOCKED | FULFILLED | NO_SHOW
     secured_donor_id: Optional[str] = None
     secured_donor_name: Optional[str] = None
+    secured_donor_phone: Optional[str] = None
     secured_at: Optional[datetime] = None
+    # Donors who turned this one down — they keep the request out of their own
+    # feed without withdrawing it from anybody else's.
+    declined_by: List[str] = []
     # ── Requester link (for shadow-ban) ──
     requester_id: Optional[str] = None    # Account that submitted the request
     requester_name: Optional[str] = None
@@ -246,6 +263,15 @@ class BloodRequest(Document):
     slip_image_hash: Optional[str] = None  # SHA-256 hash for exact-duplicate prevention
     slip_reviewed_by: Optional[str] = None
     slip_reviewed_at: Optional[datetime] = None
+    # ── Varsity Node Leaderboard (Module 3, Feature 1) ──
+    # Both fields are stamped at accept time and never recomputed. The campus is
+    # copied rather than joined so a student transferring — or deleting their
+    # account — cannot silently rewrite a month that has already been published;
+    # `response_seconds` is the ping-to-acceptance gap that breaks a points tie,
+    # measured from the ping this donor actually received for this request.
+    secured_donor_university: Optional[str] = None
+    response_seconds: Optional[float] = None
+    fulfilled_at: Optional[datetime] = None   # arrival confirmed — the scoring event
     # ── Live En-Route Tracker ──
     # Embedded rather than a collection of its own: a request has at most one
     # live trip (only one donor can hold the lock), and keeping them in one
@@ -261,6 +287,23 @@ class BloodRequest(Document):
 
     class Settings:
         name = "requests"
+
+
+class University(Document):
+    """A campus that competes on the Varsity Node Leaderboard.
+
+    Kept as its own collection rather than inferred from the distinct
+    `Account.university` values, so a university that fielded no donors in a
+    given month still appears on the board (at the bottom, honestly at zero)
+    instead of vanishing from the competition entirely.
+    """
+    name: str                             # canonical, and what accounts store
+    short_name: str                       # BRACU, NSU, DU — the board's compact label
+    city: str = "Dhaka"
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "universities"
 
 
 class Admin(Document):

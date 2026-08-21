@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import Shell from '../../components/Shell.jsx'
 import { Card, Button, Field, Input, Select, OtpInput, Badge } from '../../components/ui.jsx'
-import { authApi, configApi, donorApi, setUserSession } from '../../lib/api.js'
+import { authApi, configApi, donorApi, leaderboardApi, setUserSession } from '../../lib/api.js'
 import { captureLocation } from '../../lib/geo.js'
 
 const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
@@ -26,9 +26,10 @@ export default function DonorSignup() {
   const [step, setStep] = useState(1) // 1 phone · 2 otp · 3 health · 4 done
   const [form, setForm] = useState({
     name: '', phone: '', blood: 'O+', weight: '', lastDonation: '',
-    donationType: 'WHOLE_BLOOD', route: '',
+    donationType: 'WHOLE_BLOOD', route: '', university: '',
   })
   const [rules, setRules] = useState(FALLBACK_RULES)
+  const [universities, setUniversities] = useState([])
   const [devCode, setDevCode] = useState(null)
   const [entered, setEntered] = useState('')
   const [busy, setBusy] = useState(false)
@@ -45,6 +46,10 @@ export default function DonorSignup() {
 
   useEffect(() => {
     configApi.get().then((c) => setRules(c.eligibility)).catch(() => {})
+    // The campus list is the leaderboard's roster — free text would split one
+    // node into several on the board. A failed load just leaves the field
+    // empty, which registers a donor with no campus rather than blocking them.
+    leaderboardApi.universities().then(setUniversities).catch(() => {})
   }, [])
 
   const phone = form.phone.replace(/\s/g, '')
@@ -116,6 +121,7 @@ export default function DonorSignup() {
         name: form.name.trim(),
         role: 'donor',
         blood_type: form.blood,
+        university: form.university || null,
         health: {
           weight_kg: weightNum,
           last_donation_date: form.lastDonation
@@ -301,6 +307,21 @@ export default function DonorSignup() {
               <Field label="Daily Commute Route" hint="Enables route-aware matching along roads you already travel">
                 <Input value={form.route} onChange={set('route')} placeholder="e.g. Mirpur-10 → Farmgate → Motijheel" />
               </Field>
+              {universities.length > 0 && (
+                <Field
+                  label="Varsity Node"
+                  hint="Optional — every request you fulfil scores a point for your campus on the leaderboard"
+                >
+                  <Select value={form.university} onChange={set('university')}>
+                    <option value="">Not a student</option>
+                    {universities.map((u) => (
+                      <option key={u.id} value={u.name}>
+                        {u.name} ({u.short_name})
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
               {error && (
                 <p className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] text-primary">
                   <TriangleAlert className="size-3.5 shrink-0" />

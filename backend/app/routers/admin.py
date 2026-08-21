@@ -96,9 +96,29 @@ async def patch_request(request_id: str, body: RequestPatch, admin: Admin = Depe
     req = await BloodRequest.get(to_oid(request_id))
     if not req:
         raise HTTPException(status_code=404, detail="Blood request not found")
+
+    # Reopening a request must release the donor who held it, or the lock fields
+    # keep naming someone who is no longer coming.
+    if body.status == "OPEN" and req.status in ("LOCKED", "FULFILLED", "NO_SHOW"):
+        req.secured_donor_id = None
+        req.secured_donor_name = None
+        req.secured_donor_phone = None
+        req.secured_at = None
+
     changes = body.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(req, field, value)
+
+    # The Varsity Node Leaderboard scores on `fulfilled_at`, so an admin
+    # correcting a status by hand has to move that stamp with it — otherwise a
+    # request marked fulfilled here would never score, and one reverted out of
+    # FULFILLED would keep scoring forever.
+    if body.status is not None:
+        if req.status == "FULFILLED" and req.fulfilled_at is None:
+            req.fulfilled_at = utcnow()
+        elif req.status != "FULFILLED":
+            req.fulfilled_at = None
+
     await req.save()
     return serialize(req)
 
