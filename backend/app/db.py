@@ -9,7 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from .models import (
     Account, BloodRequest, PingLog, Appeal, Admin,
-    OtpChallenge, MedicalCertificate, Escalation, CallSession, ProxyNumber,
+    OtpChallenge, MedicalCertificate, Escalation, University, CallSession, ProxyNumber,
     CbcReport, RideBounty
 )
 
@@ -44,7 +44,7 @@ async def init_db() -> None:
         database=client[DB_NAME],
         document_models=[
             Account, BloodRequest, PingLog, Appeal, Admin,
-            OtpChallenge, MedicalCertificate, Escalation, CallSession, ProxyNumber,
+            OtpChallenge, MedicalCertificate, Escalation, University, CallSession, ProxyNumber,
             CbcReport, RideBounty
         ],
     )

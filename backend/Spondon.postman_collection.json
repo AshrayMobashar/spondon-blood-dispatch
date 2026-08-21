@@ -28,6 +28,11 @@
     {
       "key": "appeal_id",
       "value": ""
+    },
+    {
+      "key": "user_token",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -744,6 +749,462 @@
                 "{{appeal_id}}",
                 "resolve"
               ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Feature 3 — Varsity Node Leaderboard",
+      "description": "Public monthly ranking of universities by fulfilled emergency requests. Run seed_leaderboard.py first for 13 months of dummy history. Scoring is on arrival, not acceptance; universities level on points are separated by average ping-to-acceptance time.",
+      "item": [
+        {
+          "name": "Published months (the 12-month window)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leaderboard/months",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leaderboard",
+                "months"
+              ]
+            },
+            "description": "The months the board publishes, ending with the one in progress. Clients build their month picker from this, so an upcoming month is never offered."
+          }
+        },
+        {
+          "name": "Leaderboard — current month (live)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leaderboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leaderboard"
+              ]
+            },
+            "description": "Omitting ?month returns the month in progress."
+          }
+        },
+        {
+          "name": "Leaderboard — a settled month (3-way tie)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leaderboard?month=2026-03",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leaderboard"
+              ],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "2026-03"
+                }
+              ]
+            },
+            "description": "The seeded March board ends in a three-way tie on points; each tied entry carries a tie_break_note naming the response time that separated it."
+          }
+        },
+        {
+          "name": "CORNER CASE — upcoming month is refused (400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leaderboard?month=2099-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leaderboard"
+              ],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "2099-01"
+                }
+              ]
+            },
+            "description": "A future month is rejected rather than answered with an empty board: an empty board reads as 'nobody donated', which is a different claim from 'that month has not happened yet'."
+          }
+        },
+        {
+          "name": "CORNER CASE — older than the window is refused (400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leaderboard?month=2000-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leaderboard"
+              ],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "2000-01"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Varsity node roster",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leaderboard/universities",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leaderboard",
+                "universities"
+              ]
+            },
+            "description": "Also feeds the campus picker at donor sign-up. Registration matches against this roster, so free text cannot split one node into three."
+          }
+        },
+        {
+          "name": "One campus's month",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leaderboard/BRACU?month=2026-03",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "leaderboard",
+                "BRACU"
+              ],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "2026-03"
+                }
+              ]
+            },
+            "description": "Full name or short name both resolve."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Feature 4 — Golden Donor Verification",
+      "description": "Three confirmed donations earn a verified Golden Donor badge and priority placement on ICU dispatches. The badge is permanent; the priority is suspended while the donor is outside Dhaka or has not opened the app for six months, and restores itself the moment they are active again.\n\nSet {{user_token}} from a donor's /api/auth/otp/verify response before running anything below except 4.1.",
+      "item": [
+        {
+          "name": "4.1 Published rules (public)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/golden/rules",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "golden",
+                "rules"
+              ]
+            },
+            "description": "The terms of the scheme, served from the same constants the dispatcher reads — so a screen can never advertise a threshold the engine does not use. No token needed: a donor deciding whether to bother should not have to sign up to read the rules."
+          }
+        },
+        {
+          "name": "4.2 My Golden Donor status  ⭐",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{user_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/golden/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "golden",
+                "me"
+              ]
+            },
+            "description": "Badge, progress, priority, and — if suspended — exactly why.\n\nA PURE READ: it deliberately does not count as activity. If opening this screen refreshed the dormancy clock, a donor could never see their own suspension, because the act of looking would clear it."
+          }
+        },
+        {
+          "name": "4.3 Restore a lapsed priority  ⭐ corner case",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{user_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/golden/me/heartbeat",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "golden",
+                "me",
+                "heartbeat"
+              ]
+            },
+            "description": "The restoration path for a Golden Donor who went quiet for six months. Opening the app IS the whole proof of life required, so there is nothing to apply for and no admin in the loop.\n\nLook for `priority_restored: true` on the call that flips them back."
+          }
+        },
+        {
+          "name": "4.4a Relocate out of Dhaka  ⭐ corner case",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{user_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/golden/me/city",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "golden",
+                "me",
+                "city"
+              ]
+            },
+            "description": "The donor tells us they have moved away. Their badge is untouched — only the front-of-queue placement on ICU dispatches is paused, because a donor in Chattogram cannot reach a Dhaka ICU in time and the seconds spent ringing them are seconds the patient pays for.\n\nExpect status SUSPENDED, priority_active false, is_golden STILL TRUE.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"city\": \"Chattogram\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.4b …and move back",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{user_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/golden/me/city",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "golden",
+                "me",
+                "city"
+              ]
+            },
+            "description": "The same field carries the return. A declaration outranks GPS in both directions: a donor who says they are back is trusted immediately rather than waiting for their phone to report a fix from the new address.\n\nSend \"\" instead to clear the declaration and fall back to their GPS fix.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"city\": \"Dhaka\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.5 How this request's pings would be ordered  ⭐",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{user_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/golden/requests/{{request_id}}/priority",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "golden",
+                "requests",
+                "{{request_id}}",
+                "priority"
+              ]
+            },
+            "description": "A dry run — it writes nothing and pings nobody.\n\nOn an ICU request the proven donors come back at the top. Watch for a holder whose priority is suspended: they sit in the STANDARD tier, at their real distance, possibly behind a donor with one donation. That is the ghost-donor rule visible in the ordering.\n\nRun it against a non-ICU request and icu_priority comes back false with the pool in plain distance order."
+          }
+        },
+        {
+          "name": "4.6 The roll of honour",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{user_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/golden/roster?status=ACTIVE",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "golden",
+                "roster"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "ACTIVE"
+                }
+              ]
+            },
+            "description": "Every badge holder, most-proven first. Drop the status query to include suspended holders — they are listed rather than hidden, because they earned the badge.\n\nWhat is never listed is WHY an individual's priority is off: that is between the donor and the dispatcher."
+          }
+        },
+        {
+          "name": "4.7 One donor's badge",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{user_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/golden/donors/{{donor_id}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "golden",
+                "donors",
+                "{{donor_id}}"
+              ]
+            },
+            "description": "The thin public card — badge and status, never the reason for a suspension."
+          }
+        },
+        {
+          "name": "4.8 Create an ICU request (turns priority on)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{user_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/requests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "requests"
+              ]
+            },
+            "description": "`icu: true` is what makes a dispatch reorder its pings. A request logged as LIFE_THREATENING is treated as ICU-grade even without the flag, because a family logging an emergency would not know to tick it.\n\nSave the returned id into {{request_id}}, then run 4.5.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patient_name\": \"ICU Bleed\",\n  \"hospital\": \"Dhanmondi General\",\n  \"blood_type\": \"O+\",\n  \"component\": \"WHOLE_BLOOD\",\n  \"units\": 2,\n  \"severity\": \"CRITICAL\",\n  \"icu\": true,\n  \"hospital_lat\": 23.7461,\n  \"hospital_lng\": 90.3742,\n  \"road_segment\": \"Dhanmondi 27\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "4.9 Earn the badge — confirm an arrival",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{user_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/requests/{{request_id}}/arrival",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "requests",
+                "{{request_id}}",
+                "arrival"
+              ]
+            },
+            "description": "There is no endpoint that awards a badge. It is minted here, as a side effect of a hospital confirming the donor actually turned up — which is why it cannot be farmed by tapping Accept and never arriving.\n\nThe response carries `golden_donor_awarded: true` on the one call that crosses the three-donation threshold.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"donor_id\": \"{{donor_id}}\",\n  \"showed_up\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         }

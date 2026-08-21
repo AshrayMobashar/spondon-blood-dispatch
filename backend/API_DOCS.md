@@ -737,6 +737,425 @@ async def resolve_appeal(appeal_id: str, body: AppealResolve):
 
 ---
 
+# FEATURE 3 — Varsity Node Leaderboard
+
+A live, public ranking of universities by the number of emergency requests their students
+**fulfilled** in a calendar month. Scoring is on arrival, not acceptance — a donor who
+locks a request and never turns up scores nothing, which is what stops the board becoming
+a race to tap first.
+
+Seed the dummy dataset first: `python seed_leaderboard.py` (10 universities, ~120 student
+donors, 13 months of history, with ties deliberately engineered into two of the months).
+
+---
+
+## 3.1 Published months
+
+The window the board publishes: the last 12 calendar months, ending with the one in
+progress. Clients build their month picker from this rather than from the device clock,
+so a wrong phone date can never request a month that does not exist yet.
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard/months` |
+| **Headers** | *(none — the board is public)* |
+| **Params** | *(none)* |
+
+**Sample response `200`**
+```json
+{ "months": [
+    { "key": "2025-09", "label": "September 2025", "short_label": "Sep",
+      "year": 2025, "month": 9, "is_current": false },
+    { "key": "2026-08", "label": "August 2026", "short_label": "Aug",
+      "year": 2026, "month": 8, "is_current": true } ],
+  "current": "2026-08", "window_months": 12 }
+```
+
+---
+
+## 3.2 Monthly leaderboard  ⭐ core engine
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard?month=2026-03` |
+| **Headers** | *(none)* |
+| **Params** | Query: `month` — `YYYY-MM`. Omit for the month in progress. |
+
+Scoring runs as one database aggregation over the month's fulfilled requests:
+
+```python
+pipeline = [
+    {"$match": {"status": "FULFILLED",
+                "fulfilled_at": {"$gte": start, "$lt": end},
+                "secured_donor_university": {"$nin": [None, ""]}}},
+    {"$group": {"_id": "$secured_donor_university",
+                "fulfilled": {"$sum": 1},
+                # $avg skips nulls: a request accepted with no ping behind it
+                # scores a point but casts no vote on the tie-break.
+                "avg_response_seconds": {"$avg": "$response_seconds"},
+                "donor_ids": {"$addToSet": "$secured_donor_id"}}},
+]
+```
+
+Month boundaries are **local** (Asia/Dhaka) and converted to UTC before the query — a
+donation at 2 a.m. on 1 September in Dhaka belongs to September, not to August.
+
+**Sample response `200`** (abridged)
+```json
+{ "month": "2026-03", "label": "March 2026", "is_current_month": false,
+  "tie_break_rule": "Universities finishing level on fulfilled requests are separated by their average ping-to-acceptance time — the faster campus ranks higher.",
+  "totals": { "fulfilled": 67, "units": 82, "universities_scored": 10,
+              "universities_listed": 10, "donors": 51, "avg_response_seconds": 285.6 },
+  "ties": [12, 6, 5],
+  "entries": [
+    { "rank": 1, "university": "BRAC University", "short_name": "BRACU",
+      "fulfilled": 12, "units": 15, "donors": 10, "registered_students": 17,
+      "avg_response_seconds": 203.4, "avg_response_label": "3m 23s",
+      "fastest_response_label": "1m 38s", "responses_measured": 12,
+      "tied_with": ["Bangladesh University of Engineering and Technology",
+                    "University of Dhaka"],
+      "tie_broken": true,
+      "tie_break_note": "Level with … on 12 fulfilled — ranked higher on a faster 3m 23s average ping-to-acceptance.",
+      "previous_rank": 3, "movement": 2 } ] }
+```
+
+---
+
+## 3.3 The tie-break  ⭐ corner case
+
+Two universities finishing the month on the **exact same** number of fulfilled requests
+are separated by their average ping-to-acceptance time — the gap between the ping landing
+on a student's phone and that student securing the request — and the faster campus ranks
+higher. Without it the two would be frozen in whatever order the database happened to
+return, so the board would silently rank by insertion order and call it a result.
+
+```python
+def sort_key(e):
+    avg = e["avg_response_seconds"]
+    return (
+        -e["fulfilled"],                            # points first
+        avg if avg is not None else float("inf"),   # then the faster responder
+        e["university"],                            # deterministic if even that ties
+    )
+```
+
+A campus with no measured response times sorts last within its tie group: it has not
+shown it can answer faster, so it cannot claim the higher rank on that basis. Only a
+genuinely inseparable pair — same points **and** the same average — shares a rank.
+
+Every tied entry carries `tie_broken: true` and a `tie_break_note` stating exactly why it
+sits where it does, so the ranking is never something the reader has to take on trust.
+
+---
+
+## 3.4 Refusing an upcoming month  ⭐ corner case
+
+A future month is **rejected**, not answered with an empty board — an empty board reads
+as "nobody donated", which is a very different claim from "that month has not happened
+yet".
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard?month=2026-09` |
+
+**Sample response `400`**
+```json
+{ "detail": "September 2026 has not happened yet — the leaderboard only publishes months up to August 2026." }
+```
+
+Anything older than the 12-month window is refused the same way, and a malformed month
+(`?month=august`) returns a `400` naming the expected shape.
+
+---
+
+## 3.5 Varsity node roster
+
+Used by the board and by the campus picker at donor sign-up. Registration matches a
+submitted campus against this roster (full name **or** short name, case-insensitively)
+and rejects anything else with a `400` — free text would split one node into three on the
+board, each with a third of the score.
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard/universities` |
+
+**Sample response `200`**
+```json
+[ { "id": "6a59…", "name": "BRAC University", "short_name": "BRACU", "city": "Dhaka" } ]
+```
+
+---
+
+## 3.6 One campus's month
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard/{university}?month=2026-03` |
+| **Params** | Path: `university` — full name or short name (`BRACU`) |
+
+Returns that campus's single row plus its rank in context; `404` if it is not a
+registered node.
+
+**Privacy.** Every response here is campus totals only — the board never publishes a
+donor's name, phone number or location, the same line the dispatch radar draws in
+`app.zones`.
+
+---
+
+# FEATURE 4 — Golden Donor Verification
+
+Three **confirmed** donations earn a donor a verified *Golden Donor* badge, and the badge
+buys them exactly one thing: on an ICU dispatch they are pinged before everybody else.
+
+Two ideas are kept deliberately apart, and the whole feature turns on the distinction:
+
+| | earned at | revoked when |
+|---|---|---|
+| **the badge** (`is_golden`) | 3 confirmed donations | never — it is a record of what someone did |
+| **the priority** (`priority_active`) | the same moment | the donor stops looking reachable |
+
+**Only confirmed arrivals count.** `health.donation_count` is incremented in exactly one
+place — `POST /api/requests/{id}/arrival` with `showed_up: true` — so the badge cannot be
+farmed by tapping Accept and never turning up.
+
+**The ghost-donor corner case.** A Golden Donor who relocates out of Dhaka, or who has not
+opened the app for six months, has their *priority* suspended. This is the point of the
+feature, not a punishment: priority placement means the dispatcher spends its first
+seconds on that donor, and spending them on a phone in Chattogram — or one nobody has
+opened since February — costs an ICU patient the very seconds the priority was meant to
+buy. The badge stays. The priority returns automatically the moment the donor opens the
+app or declares themselves back in the city; there is nothing to apply for and no admin
+in the loop.
+
+Priority **reorders and never filters**: a donor without a badge is pinged for an ICU case
+exactly as they always were. The badge decides who hears *first*, not who hears.
+
+---
+
+## 4.1 Published rules
+
+The terms of the scheme, served from the same constants the engine reads — so a screen can
+never advertise a threshold the dispatcher does not use.
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/golden/rules` |
+| **Headers** | *(none — readable before signing up)* |
+
+**Sample response `200`**
+```json
+{ "min_donations": 3, "counts_only_confirmed_arrivals": true,
+  "dormant_after_days": 180, "home_city": "Dhaka", "city_radius_km": 40.0,
+  "priority_severities": ["LIFE_THREATENING"],
+  "badge_is_permanent": true, "suspension_is_automatic": true,
+  "restoration_is_automatic": true,
+  "summary": "3 confirmed donations earn a verified Golden Donor badge and priority placement on ICU dispatches. Priority is suspended while a donor is outside Dhaka or has not opened the app for 180 days, and restores itself as soon as they are active again." }
+```
+
+---
+
+## 4.2 My Golden Donor status  ⭐ core engine
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/golden/me` |
+| **Headers** | `Authorization: Bearer <user token>` |
+
+A **pure read**: it recomputes and reports but deliberately does *not* count as activity.
+If opening this screen refreshed the dormancy clock, a donor could never see their own
+suspension — the act of looking would clear it, and the six-month rule would be invisible
+to the only person it affects. `POST /golden/me/heartbeat` is the explicit signal.
+
+**Sample response `200`** *(a suspended holder)*
+```json
+{ "donor_id": "68f1", "donor_name": "Arif Rahman", "blood_type": "O+",
+  "badge": { "is_golden": true, "status": "SUSPENDED", "priority_active": false,
+             "verified": true, "earned_at": "2026-02-11T09:14:02+00:00",
+             "suspended_reasons": ["No app activity for 210 days (suspends after 180)."] },
+  "progress": { "donations": 6, "required": 3, "remaining": 0, "percent": 100 },
+  "priority": { "active": false, "tier": "STANDARD",
+                "explanation": "ICU dispatches reach you in the standard distance order." },
+  "activity": { "last_seen_at": "2026-01-23T00:00:00+00:00", "days_since_seen": 210,
+                "dormant_after_days": 180, "days_until_dormant": 0, "is_dormant": true },
+  "location": { "home_city": "Dhaka", "declared": false, "served_city": "Dhaka",
+                "km_from_city": 3.2, "radius_km": 40.0, "relocated": false },
+  "history": { "earned_at": "2026-02-11T09:14:02+00:00", "donations_at_award": 3,
+               "suspensions": 1, "suspended_at": "2026-08-21T16:14:10+00:00",
+               "restored_at": null },
+  "rules": { "min_donations": 3, "dormant_after_days": 180, "home_city": "Dhaka" } }
+```
+
+`403` for a patient account — *"Golden Donor status applies to donor accounts only."*
+
+---
+
+## 4.3 Restore a lapsed priority  ⭐ corner case
+
+| | |
+|---|---|
+| **URL** | `POST http://localhost:1184/api/golden/me/heartbeat` |
+| **Headers** | `Authorization: Bearer <user token>` |
+| **Body** | *(none)* |
+
+Opening the app *is* the whole proof of life the suspension was waiting on.
+
+**Sample response `200`**
+```json
+{ "donor_id": "68f1", "status": "ACTIVE", "priority_active": true,
+  "priority_restored": true, "still_suspended_because": [],
+  "message": "Welcome back — your Golden Donor priority is active again.",
+  "golden": { "badge": "the full 4.2 payload" } }
+```
+
+---
+
+## 4.4 Declare a relocation (and a return)  ⭐ corner case
+
+| | |
+|---|---|
+| **URL** | `PUT http://localhost:1184/api/golden/me/city` |
+| **Headers** | `Authorization: Bearer <user token>` |
+| **Body** | `{ "city": "Chattogram" }` — send `""` or `null` to clear it and fall back to GPS |
+
+One field carries both directions. A relocation the donor could declare but not undo would
+strand a returning donor outside the pool until their GPS caught up, so a declaration
+outranks GPS both ways.
+
+**Sample response `200`** *(moving away)*
+```json
+{ "donor_id": "68f1", "home_city": "Chattogram", "status": "SUSPENDED",
+  "priority_active": false,
+  "message": "Noted. Your badge is yours to keep — only ICU priority is paused while you are outside Dhaka." }
+```
+
+Without a declaration the engine falls back to the donor's last GPS fix, and a fix more
+than `city_radius_km` from the city centre reads as a relocation:
+`"Last known location is 212 km from Dhaka (limit 40 km)."`
+
+---
+
+## 4.5 How a request's pings would be ordered  ⭐ core engine
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/golden/requests/{request_id}/priority` |
+| **Headers** | `Authorization: Bearer <user token>` |
+
+A dry run: it writes nothing and pings nobody. It answers the question the feature actually
+makes a claim about — for *this* emergency, in what sequence would donors be reached?
+
+**Sample response `200`**
+```json
+{ "request_id": "68f2", "hospital": "Dhanmondi General", "blood_type": "O+",
+  "severity": "CRITICAL", "icu": true, "icu_priority": true,
+  "reason": "Flagged as an ICU case — proven donors are pinged first.",
+  "order": [
+    { "position": 1, "donor_name": "Arif Rahman", "tier": "GOLDEN_PRIORITY",
+      "is_golden": true, "priority_active": true, "donations": 3 },
+    { "position": 2, "donor_name": "Bithi Haque", "tier": "STANDARD",
+      "is_golden": false, "priority_active": false, "donations": 1 },
+    { "position": 3, "donor_name": "Chowdhury Kamal", "tier": "STANDARD",
+      "is_golden": true, "priority_active": false, "donations": 6 } ] }
+```
+
+Position 3 is the corner case on display: a six-donation holder whose priority is
+suspended sits in the standard tier, at their real distance, behind a donor with one
+donation. Ask the same question of a non-ICU request and `icu_priority` comes back
+`false` with the pool in plain distance order — the honest way to show that the badge
+changes nothing there.
+
+---
+
+## 4.6 The roll of honour
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/golden/roster?status=ACTIVE` |
+| **Headers** | `Authorization: Bearer <user token>` |
+| **Params** | Query: `status` — `ACTIVE` or `SUSPENDED`. Omit for all holders. |
+
+Signed-in users only: a name and a donation count is fine among members, not something to
+publish to the open internet. Suspended holders are **listed rather than hidden** — they
+earned the badge — but the *reason* for any individual's suspension never appears here.
+"Relocated to Chattogram" and "has not opened the app since March" are both facts about
+where a private person is and what they are doing.
+
+**Sample response `200`**
+```json
+{ "count": 2, "active": 1, "suspended": 1, "min_donations": 3,
+  "donors": [
+    { "donor_id": "68f3", "donor_name": "Chowdhury Kamal", "blood_type": "O+",
+      "university": "BRAC University", "is_golden": true, "status": "SUSPENDED",
+      "priority_active": false, "donations": 6, "earned_at": "2025-11-02T10:00:00+00:00" },
+    { "donor_id": "68f1", "donor_name": "Arif Rahman", "blood_type": "O+",
+      "university": null, "is_golden": true, "status": "ACTIVE",
+      "priority_active": true, "donations": 3, "earned_at": "2026-02-11T09:14:02+00:00" } ] }
+```
+
+---
+
+## 4.7 One donor's badge
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/golden/donors/{donor_id}` |
+| **Headers** | `Authorization: Bearer <user token>` |
+
+The same thin public card as a roster row — badge and status, never the reason.
+
+---
+
+## 4.8 Earning the badge (the write path)
+
+There is no endpoint that awards a badge. It is minted as a side effect of a hospital
+confirming an arrival:
+
+```
+POST /api/requests/{id}/arrival    { "donor_id": "68f1", "showed_up": true }
+```
+
+whose response now carries:
+
+```json
+{ "status": "FULFILLED", "donation_type": "WHOLE_BLOOD",
+  "golden_donor": { "is_golden": true, "status": "ACTIVE", "priority_active": true,
+                    "label": "Golden Donor", "verified": true },
+  "golden_donor_awarded": true }
+```
+
+`golden_donor_awarded` is `true` only on the dispatch that crossed the threshold — it is
+the hook a client uses to show the "you are now a Golden Donor" moment exactly once.
+
+**Flagging a request as ICU** is done at creation:
+
+```
+POST /api/requests   { "severity": "CRITICAL", "icu": true }
+```
+
+A request logged as `LIFE_THREATENING` is treated as ICU-grade even without the flag,
+because a family logging an emergency would not know to tick it, and guessing low is the
+expensive direction to be wrong in.
+
+**What the dispatch response gains.** `POST /api/requests/{id}/dispatch` now reports the
+ordering it used, and every result row carries its tier:
+
+```json
+{ "icu_priority": true,
+  "icu_priority_reason": "Flagged as an ICU case — proven donors are pinged first.",
+  "ping_order": "Golden Donors first, then nearest first.",
+  "golden_donors_prioritised": 1,
+  "reachable": 6, "pinged": 6,
+  "results": [
+    { "donor_name": "Arif Rahman", "priority_tier": "GOLDEN_PRIORITY",
+      "golden_donor": true, "distance_km": 1.51, "pinged": true },
+    { "donor_name": "Bithi Haque", "priority_tier": "STANDARD",
+      "golden_donor": false, "distance_km": 1.51, "pinged": true } ] }
+```
+
+Both donors above are 1.51 km out; only the badge separates them.
+
+---
+
 ## Endpoint summary
 
 ### Feature 1 — Smart Ping
@@ -769,3 +1188,22 @@ async def resolve_appeal(appeal_id: str, body: AppealResolve):
 | 2.6 | GET | `/api/donors/{id}/reliability` |
 | 2.7 | POST | `/api/appeals` |
 | 2.8 | POST | `/api/appeals/{id}/resolve` |
+
+### Feature 3 — Varsity Node Leaderboard
+| # | Method | Endpoint |
+|---|--------|----------|
+| 3.1 | GET | `/api/leaderboard/months` |
+| 3.2 | GET | `/api/leaderboard?month=YYYY-MM` |
+| 3.5 | GET | `/api/leaderboard/universities` |
+| 3.6 | GET | `/api/leaderboard/{university}?month=YYYY-MM` |
+
+### Feature 4 — Golden Donor Verification
+| # | Method | Endpoint |
+|---|--------|----------|
+| 4.1 | GET | `/api/golden/rules` |
+| 4.2 | GET | `/api/golden/me` |
+| 4.3 | POST | `/api/golden/me/heartbeat` |
+| 4.4 | PUT | `/api/golden/me/city` |
+| 4.5 | GET | `/api/golden/requests/{id}/priority` |
+| 4.6 | GET | `/api/golden/roster?status=` |
+| 4.7 | GET | `/api/golden/donors/{id}` |

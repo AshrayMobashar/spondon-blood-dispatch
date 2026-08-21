@@ -8,7 +8,7 @@ import logging
 from contextlib import asynccontextmanager, suppress
 
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 # Raised for any document operation attempted before Beanie has been bound to a
@@ -23,10 +23,13 @@ from . import tracking as app_tracking
 from .dispatch import escalation_watcher
 from .models import Account, BloodRequest
 from .security import AUD_USER
-from .realtime import feed, trip_room
+from .realtime import call_room, feed, trip_room
 
 log = logging.getLogger("spondon.main")
-from .routers import auth, smart_ping, donor_health, concurrency, admin, tracking, calling, cbc_triage
+from .routers import (
+    auth, smart_ping, donor_health, concurrency, admin, leaderboard, tracking, calling,
+    golden, cbc_triage,
+)
 
 PORT = config.PORT
 
@@ -81,7 +84,9 @@ app = FastAPI(
     description=(
         "Emergency blood-dispatch APIs — registration & OTP auth, the eligibility "
         "cooldown engine, Smart Ping, the expanding geo-ripple with its rare-blood "
-        "city-wide override, concurrency locking, and the admin console."
+        "city-wide override, concurrency locking, the Varsity Node Leaderboard, "
+        "Golden Donor verification with ICU priority placement, CBC report triage, "
+        "and the admin console."
     ),
     lifespan=lifespan,
 )
@@ -137,13 +142,19 @@ app.include_router(
     concurrency.router, prefix="/api", tags=["Module 2 — Dispatch, Concurrency & Slips"]
 )
 app.include_router(
+    leaderboard.router, prefix="/api", tags=["Module 3 — Varsity Node Leaderboard"]
+)
+app.include_router(
     tracking.router, prefix="/api", tags=["Module 3.1 — Live En-Route Tracker"]
 )
 app.include_router(
     calling.router, prefix="/api", tags=["Module 3.2 — Direct-Connect Masked Calling"]
 )
-app.include_router(admin.router, prefix="/api", tags=["Admin — Role & Access Management"])
+app.include_router(
+    golden.router, prefix="/api", tags=["Module 3.3 — Golden Donor Verification"]
+)
 app.include_router(cbc_triage.router, prefix="/api", tags=["CBC Triage"])
+app.include_router(admin.router, prefix="/api", tags=["Admin — Role & Access Management"])
 
 
 @app.exception_handler(CollectionWasNotInitialized)
@@ -296,6 +307,87 @@ async def trip_socket(websocket: WebSocket, request_id: str, token: str | None =
     except Exception:
         log.debug("Trip socket closed unexpectedly", exc_info=True)
     finally:
+        await feed.leave(websocket, room)
+
+
+@app.websocket("/ws/call")
+async def call_socket(websocket: WebSocket, session_id: str, token: str | None = None):
+    """Signalling relay for the Direct-Connect voice leg.
+
+    This is what makes the call audible rather than notional. Both participants
+    open this socket for their call session; one side rings, the other accepts,
+    and the two browsers then exchange an SDP offer, an answer and a handful of
+    ICE candidates through here until a peer connection is established. From
+    that point the voice travels **directly between the two devices** — this
+    process relays a few kilobytes of negotiation and no audio at all, which is
+    why the feature costs nothing to run and why no server operator can listen.
+
+    Three properties are deliberate:
+
+    * **Same authorisation as the REST channel.** Only the family who opened the
+      request and the donor who accepted it may join, so a leaked session id
+      cannot be used to pick up someone else's call.
+    * **The relay reads nothing.** Payloads are copied verbatim to the peer.
+      The server does not need to understand SDP to forward it, and anything it
+      parsed would be one more thing that could be logged.
+    * **Masking survives.** Nothing here carries a phone number — the peers are
+      identified by their role in this one emergency. The privacy promise in
+      `app.masking` is not weakened by giving the call real audio.
+
+    Messages: `ring`, `accept`, `reject`, `offer`, `answer`, `ice`, `hangup`.
+    """
+    if not db_module.ready:
+        await websocket.close(code=4503, reason="Database unavailable.")
+        return
+
+    account = None
+    if token:
+        try:
+            payload = jwt.decode(
+                token, config.JWT_SECRET, algorithms=[config.JWT_ALGORITHM], audience=AUD_USER
+            )
+            account = await Account.get(payload.get("sub") or "")
+        except Exception:
+            account = None
+    if account is None:
+        await websocket.close(code=4401, reason="Sign in to join this call.")
+        return
+
+    try:
+        session, _req, role = await calling.authorise_session(session_id, account)
+    except HTTPException as exc:
+        code = {403: 4403, 404: 4404, 409: 4409}.get(exc.status_code, 4400)
+        await websocket.close(code=code, reason=str(exc.detail)[:120])
+        return
+
+    room = call_room(str(session.id))
+    await feed.join_room(websocket, room)
+    try:
+        await websocket.send_json({
+            "type": "joined",
+            "session_id": str(session.id),
+            "role": role,
+            "ice_servers": config.ice_servers(),
+            "peer_present": feed.watcher_count_room(room) > 1,
+        })
+        # Tell the side that was already waiting that someone else has arrived,
+        # so a caller does not ring a room nobody is listening in.
+        await feed.relay(room, websocket, {"type": "peer_joined", "role": role})
+
+        while True:
+            message = await websocket.receive_json()
+            kind = message.get("type")
+            if kind not in {"ring", "accept", "reject", "offer", "answer", "ice", "hangup"}:
+                continue
+            await feed.relay(room, websocket, {**message, "from_role": role})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        log.debug("Call signalling socket closed unexpectedly", exc_info=True)
+    finally:
+        # A tab closed mid-call leaves the other side ringing forever otherwise.
+        with suppress(Exception):
+            await feed.relay(room, websocket, {"type": "peer_left", "from_role": role})
         await feed.leave(websocket, room)
 
 

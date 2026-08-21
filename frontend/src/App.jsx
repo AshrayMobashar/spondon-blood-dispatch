@@ -11,8 +11,13 @@ import UpdateRecords from './pages/donor/UpdateRecords.jsx'
 import WeightValidation from './pages/donor/WeightValidation.jsx'
 import DoctorSlipOcr from './pages/patient/DoctorSlipOcr.jsx'
 import CbcTriage from './pages/patient/CbcTriage.jsx'
+import VarsityLeaderboard from './pages/leaderboard/VarsityLeaderboard.jsx'
 import LiveTracker from './pages/patient/LiveTracker.jsx'
 import EnRoute from './pages/donor/EnRoute.jsx'
+import DonorProfile from './pages/donor/DonorProfile.jsx'
+import GoldenDonor from './pages/donor/GoldenDonor.jsx'
+import IncomingRequests from './pages/donor/IncomingRequests.jsx'
+import Ashray3 from './pages/Ashray3.jsx'
 import GeoRipple from './pages/admin/GeoRipple.jsx'
 import PingLog from './pages/admin/PingLog.jsx'
 import RareBlood from './pages/admin/RareBlood.jsx'
@@ -31,6 +36,9 @@ function App() {
       <Route path="/register/patient" element={<PatientSignup />} />
       <Route path="/register/donor" element={<DonorSignup />} />
 
+      {/* Public — donors, patients and anyone else can read the board */}
+      <Route path="/leaderboard" element={<VarsityLeaderboard />} />
+
       {/* Patient / Family */}
       <Route path="/patient/ocr" element={<DoctorSlipOcr />} />
       <Route path="/patient/cbc-triage" element={<CbcTriage />} />
@@ -44,6 +52,9 @@ function App() {
       <Route path="/donor/eligibility" element={<EligibilityEngine />} />
       <Route path="/donor/records" element={<UpdateRecords />} />
       <Route path="/donor/weight" element={<WeightValidation />} />
+      <Route path="/donor/profile" element={<DonorProfile />} />
+      <Route path="/donor/golden" element={<GoldenDonor />} />
+      <Route path="/donor/requests" element={<IncomingRequests />} />
       <Route path="/donor/en-route" element={<EnRoute />} />
       <Route path="/donor/en-route/:requestId" element={<EnRoute />} />
 
@@ -61,6 +72,7 @@ function App() {
       {/* Legacy aliases */}
       <Route path="/ashray1" element={<Ashray1 />} />
       <Route path="/ashray2" element={<Ashray2 />} />
+      <Route path="/ashray3" element={<Ashray3 />} />
 
       <Route path="*" element={<NotFound />} />
     </Routes>

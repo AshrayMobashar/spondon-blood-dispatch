@@ -136,6 +136,33 @@ TRIP_IMPLAUSIBLE_SPEED_KMH = _float("TRIP_IMPLAUSIBLE_SPEED_KMH", 160.0)
 # grid is not a straight line to anywhere.
 TRIP_ROAD_FACTOR = _float("TRIP_ROAD_FACTOR", 1.35)
 
+# ── Golden Donor Verification (Module 3, Feature 3) ──────────────────
+# Three confirmed donations earn the badge. It is a *proven* count — only an
+# arrival the hospital confirmed increments it, so the badge cannot be farmed
+# by accepting requests and never turning up.
+GOLDEN_DONOR_MIN_DONATIONS = _int("GOLDEN_DONOR_MIN_DONATIONS", 3)
+# Six months of silence and the priority is suspended. The badge itself is
+# never taken away — it was earned — but a donor the app has not seen since
+# February must not be first in the queue for an ICU case tonight, because the
+# seconds spent ringing a phone nobody opens are seconds the patient pays for.
+GOLDEN_DORMANT_AFTER_DAYS = _int("GOLDEN_DORMANT_AFTER_DAYS", 180)
+# The city the priority pool serves. A donor who has moved away is not less
+# proven — they are simply not reachable in time for a Dhaka ICU.
+GOLDEN_HOME_CITY = os.getenv("GOLDEN_HOME_CITY", "Dhaka")
+# Centre of Dhaka and the radius that still counts as "in the city". Wide
+# enough to include Savar and Keraniganj, which are commutable; narrow enough
+# that Chattogram is plainly outside.
+GOLDEN_CITY_LAT = _float("GOLDEN_CITY_LAT", 23.7806)
+GOLDEN_CITY_LNG = _float("GOLDEN_CITY_LNG", 90.4074)
+GOLDEN_CITY_RADIUS_KM = _float("GOLDEN_CITY_RADIUS_KM", 40.0)
+# Which requests actually trigger the priority ordering. Severity alone is the
+# fallback; a request explicitly flagged `icu` counts regardless of severity.
+GOLDEN_PRIORITY_SEVERITIES = {
+    s.strip().upper()
+    for s in os.getenv("GOLDEN_PRIORITY_SEVERITIES", "LIFE_THREATENING").split(",")
+    if s.strip()
+}
+
 # ── Direct-Connect Masked Calling (Module 3, Feature 2) ──────────────
 # A call channel outlives neither the emergency nor the day. It is torn down on
 # arrival; this is the backstop for a request nobody ever closes.
@@ -159,6 +186,46 @@ GSM_PROXY_NUMBERS = [
 # Unset means the bridge is simulated locally and says so.
 VOICE_BRIDGE_URL = os.getenv("VOICE_BRIDGE_URL")
 VOICE_BRIDGE_KEY = os.getenv("VOICE_BRIDGE_KEY")
+
+# ── The VOIP leg itself (WebRTC) ─────────────────────────────────────
+# The media never touches this server: the two browsers negotiate a peer
+# connection and the audio flows directly between them. All the backend lends
+# them is a signalling relay (`/ws/call`) and this list of ICE servers.
+#
+# STUN is free and public — it only tells a browser what its own public address
+# looks like from outside, so nothing private passes through it. That is enough
+# for the large majority of connections.
+#
+# TURN is the exception case: when both sides sit behind symmetric NAT (some
+# mobile carriers, hospital guest wifi) no direct path exists and the audio has
+# to be relayed. TURN relays cost bandwidth and so are not given away freely at
+# scale; leave these unset and calls simply fail on those networks — which is
+# exactly the corner case the GSM fallback below already exists to catch.
+STUN_SERVERS = [
+    s.strip()
+    for s in os.getenv(
+        "STUN_SERVERS",
+        "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302",
+    ).split(",")
+    if s.strip()
+]
+TURN_URLS = [u.strip() for u in os.getenv("TURN_URLS", "").split(",") if u.strip()]
+TURN_USERNAME = os.getenv("TURN_USERNAME")
+TURN_CREDENTIAL = os.getenv("TURN_CREDENTIAL")
+
+
+def ice_servers() -> list[dict]:
+    """RTCPeerConnection configuration handed to both participants."""
+    servers: list[dict] = []
+    if STUN_SERVERS:
+        servers.append({"urls": STUN_SERVERS})
+    if TURN_URLS:
+        servers.append({
+            "urls": TURN_URLS,
+            "username": TURN_USERNAME or "",
+            "credential": TURN_CREDENTIAL or "",
+        })
+    return servers
 
 # ── OTP ──────────────────────────────────────────────────────────────
 OTP_TTL_SECONDS = _int("OTP_TTL_SECONDS", 300)
@@ -237,6 +304,13 @@ def public_config() -> dict:
             "rare_escalation_seconds": RARE_ESCALATION_SECONDS,
             "rare_sms_alerts": RARE_SMS_ALERTS,
         },
+        "golden_donor": {
+            "min_donations": GOLDEN_DONOR_MIN_DONATIONS,
+            "dormant_after_days": GOLDEN_DORMANT_AFTER_DAYS,
+            "home_city": GOLDEN_HOME_CITY,
+            "city_radius_km": GOLDEN_CITY_RADIUS_KM,
+            "priority_severities": sorted(GOLDEN_PRIORITY_SEVERITIES),
+        },
         "tracking": {
             "ping_interval_seconds": TRIP_PING_INTERVAL_SECONDS,
             "stale_after_seconds": TRIP_STALE_AFTER_SECONDS,
@@ -249,6 +323,9 @@ def public_config() -> dict:
             "max_packet_loss_pct": CALL_MAX_PACKET_LOSS_PCT,
             "degraded_seconds": CALL_DEGRADED_SECONDS,
             "proxy_pool_size": len(GSM_PROXY_NUMBERS),
+            "media": "webrtc",
+            "stun_servers": len(STUN_SERVERS),
+            "turn_configured": bool(TURN_URLS),
         },
         "otp": {"length": OTP_LENGTH, "ttl_seconds": OTP_TTL_SECONDS},
         "cbc_triage": {"min_reports": CBC_MIN_REPORTS},

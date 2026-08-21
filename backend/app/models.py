@@ -8,6 +8,10 @@ Collections, by the feature that owns them:
   Module 2.1 - BloodRequest.hospital_location (expanding geo-ripple)
   Module 2.2 - BloodRequest lock fields, Account.reliability, Appeal
   Module 2.3 - BloodRequest slip_* fields (doctor's-slip OCR)
+  Module 3.1 - University, Account.university, BloodRequest.secured_donor_university
+               / response_seconds / fulfilled_at (Varsity Node Leaderboard)
+  Module 3.3 - Account.golden, BloodRequest.icu (Golden Donor Verification)
+  CBC Triage - CbcReport / CbcUpload; Ride Bounty - RideBounty, Account.vehicle_type
   Admin      - Admin, Account.status (ban / shadow ban)
 """
 from datetime import datetime, timezone
@@ -49,6 +53,11 @@ class CommuteRoute(BaseModel):
     `enabled` is a pause switch, not a delete: a donor who turns commute
     matching off keeps their segments and can turn it back on without retyping
     the route. Clearing the route entirely is a separate action.
+
+    `segments` (names) stay the single source of truth for *matching*; `points`
+    are the same route expressed as map coordinates, added so the donor's Leaflet
+    map can draw the actual line they travel. A route can carry names without
+    points (typed on the records page) or both (drawn on the map).
     """
     segments: List[str] = []             # named road segments on the daily route
     points: List[RoutePoint] = []        # optional map coordinates for those segments
@@ -128,6 +137,50 @@ class Reliability(BaseModel):
     removed_at: Optional[datetime] = None
 
 
+# Golden Donor lifecycle (Module 3, Feature 3).
+GOLDEN_NOT_EARNED = "NOT_EARNED"   # fewer than the required confirmed donations
+GOLDEN_ACTIVE = "ACTIVE"           # badge earned and priority currently applied
+GOLDEN_SUSPENDED = "SUSPENDED"     # badge kept, priority temporarily withdrawn
+
+
+class GoldenStatus(BaseModel):
+    """The Golden Donor badge and whether its priority is currently in force.
+
+    Two separate ideas, deliberately kept in two fields:
+
+      * `is_golden` — the badge. Earned at three confirmed donations and never
+        taken away. It is a record of what someone did, and moving house does
+        not undo three donations.
+      * `priority_active` — the dispatch privilege. Suspended the moment the
+        donor looks like a ghost (out of the city, or six months without
+        opening the app) and restored the moment they do not.
+
+    Collapsing the two into one flag would mean a returning donor had to earn
+    their badge again from scratch, and a family would see a proven donor's
+    history erased because they spent a semester abroad.
+    """
+    is_golden: bool = False
+    status: str = GOLDEN_NOT_EARNED        # NOT_EARNED | ACTIVE | SUSPENDED
+    priority_active: bool = False
+    donations_at_award: int = 0
+    earned_at: Optional[datetime] = None
+    # Why the priority is off right now. Empty whenever it is on.
+    suspended_reasons: List[str] = []
+    suspended_at: Optional[datetime] = None
+    restored_at: Optional[datetime] = None
+    suspensions: int = 0                   # lifetime count, for the donor's own history
+    # Last time the donor was seen *using* the app — a login or an explicit
+    # heartbeat from a screen they opened. Separate from `Account.last_login_at`
+    # because a donor who stays signed in for a year still opens the app, and
+    # judging them by their last login alone would suspend an active donor.
+    last_active_at: Optional[datetime] = None
+    # Self-declared city. Set when a donor tells us they have relocated; the
+    # GPS check below is the fallback for one who has not.
+    home_city: Optional[str] = None
+    last_known_city_km: Optional[float] = None   # km from the served city centre
+    recalculated_at: Optional[datetime] = None
+
+
 class HealthProfile(BaseModel):
     """Captured at donor sign-up and editable afterwards.
 
@@ -184,6 +237,12 @@ class Account(Document):
     phone: Optional[str] = None
     phone_verified: bool = False
     fcm_token: Optional[str] = None
+    address: Optional[str] = None
+    # ── Module 3.1 — Varsity Node Leaderboard ──
+    # The student's campus, by University.name. Optional by design: a donor who
+    # is not a student simply never scores for anyone, and nothing else about
+    # their account behaves differently.
+    university: Optional[str] = None
     # ── Module 1.1 — eligibility ──
     health: HealthProfile = Field(default_factory=HealthProfile)
     eligibility: Eligibility = Field(default_factory=Eligibility)
@@ -194,6 +253,10 @@ class Account(Document):
     vehicle_type: str = "none"            # none | bike | car (for ride bounty)
     # ── Module 2.2 — accountability ──
     reliability: Reliability = Field(default_factory=Reliability)
+    # ── Module 3.3 — Golden Donor Verification ──
+    # Derived state, never hand-edited: app.golden.recalculate() is the only
+    # writer, exactly as app.eligibility owns the eligibility flag.
+    golden: GoldenStatus = Field(default_factory=GoldenStatus)
     # ── Account moderation (admin-controlled) ──
     status: str = ACTIVE                  # ACTIVE | BANNED | SHADOW_BANNED
     status_reason: Optional[str] = None
@@ -240,6 +303,7 @@ class RideBounty(Document):
         name = "ride_bounties"
 
 
+
 class BloodRequest(Document):
     patient_name: str
     hospital: str
@@ -247,12 +311,21 @@ class BloodRequest(Document):
     component: str = "WHOLE_BLOOD"       # WHOLE_BLOOD | PLATELETS | PLASMA
     units: int = 1
     severity: str = "NORMAL"             # NORMAL | CRITICAL | LIFE_THREATENING
+    # Set by the requesting hospital when the patient is in intensive care.
+    # Severity alone cannot express this: a LIFE_THREATENING road accident in
+    # A&E and a bleeding ICU patient are both urgent, and only the second is
+    # the case Golden Donor priority exists for.
+    icu: bool = False
     road_segment: Optional[str] = None   # road segment the request sits on
     hospital_location: Optional[GeoPoint] = None   # drives the expanding ripple
     status: str = "OPEN"                 # OPEN | LOCKED | FULFILLED | NO_SHOW
     secured_donor_id: Optional[str] = None
     secured_donor_name: Optional[str] = None
+    secured_donor_phone: Optional[str] = None
     secured_at: Optional[datetime] = None
+    # Donors who turned this one down — they keep the request out of their own
+    # feed without withdrawing it from anybody else's.
+    declined_by: List[str] = []
     # ── Requester link (for shadow-ban) ──
     requester_id: Optional[str] = None    # Account that submitted the request
     requester_name: Optional[str] = None
@@ -272,6 +345,15 @@ class BloodRequest(Document):
     slip_image_hash: Optional[str] = None  # SHA-256 hash for exact-duplicate prevention
     slip_reviewed_by: Optional[str] = None
     slip_reviewed_at: Optional[datetime] = None
+    # ── Varsity Node Leaderboard (Module 3, Feature 1) ──
+    # Both fields are stamped at accept time and never recomputed. The campus is
+    # copied rather than joined so a student transferring — or deleting their
+    # account — cannot silently rewrite a month that has already been published;
+    # `response_seconds` is the ping-to-acceptance gap that breaks a points tie,
+    # measured from the ping this donor actually received for this request.
+    secured_donor_university: Optional[str] = None
+    response_seconds: Optional[float] = None
+    fulfilled_at: Optional[datetime] = None   # arrival confirmed — the scoring event
     # ── Live En-Route Tracker ──
     # Embedded rather than a collection of its own: a request has at most one
     # live trip (only one donor can hold the lock), and keeping them in one
@@ -287,6 +369,23 @@ class BloodRequest(Document):
 
     class Settings:
         name = "requests"
+
+
+class University(Document):
+    """A campus that competes on the Varsity Node Leaderboard.
+
+    Kept as its own collection rather than inferred from the distinct
+    `Account.university` values, so a university that fielded no donors in a
+    given month still appears on the board (at the bottom, honestly at zero)
+    instead of vanishing from the competition entirely.
+    """
+    name: str                             # canonical, and what accounts store
+    short_name: str                       # BRACU, NSU, DU — the board's compact label
+    city: str = "Dhaka"
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "universities"
 
 
 class Admin(Document):
@@ -503,4 +602,3 @@ class CbcReport(Document):
 
     class Settings:
         name = "cbc_reports"
-

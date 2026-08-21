@@ -136,6 +136,9 @@ export const authApi = {
   register: (payload) =>
     request('/auth/register', { method: 'POST', auth: false, body: payload }),
   me: () => request('/auth/me', { auth: 'user' }),
+  /** Restored alongside `requestApi.incoming` — DonorProfile.jsx calls this and
+   *  the wholesale upload on main removed it. */
+  updateProfile: (payload) => request('/auth/me', { method: 'PATCH', auth: 'user', body: payload }),
 }
 
 /* ── Donor ───────────────────────────────────────────────────────── */
@@ -159,6 +162,7 @@ export const donorApi = {
     request(`/donors/${id}/certificates`, { method: 'POST', auth: 'user', body }),
   updateVehicle: (donorId, vehicle_type) =>
     request(`/donors/${donorId}/vehicle`, { method: 'PATCH', auth: 'user', body: { vehicle_type } }),
+
   sleepMode: (id) => request(`/donors/${id}/sleep-mode`, { auth: 'user' }),
   saveSleepMode: (id, body) =>
     request(`/donors/${id}/sleep-mode`, { method: 'PUT', auth: 'user', body }),
@@ -193,6 +197,11 @@ export const donorApi = {
 export const requestApi = {
   create: (body) => request('/requests', { method: 'POST', auth: 'user', body }),
   list: () => request('/requests', { auth: false }),
+  /** The signed-in donor's own active pings — what the Incoming Requests feed
+   *  renders. Restored here: a wholesale file upload on main dropped it while
+   *  the page that calls it stayed, so the feed was calling a method that no
+   *  longer existed. */
+  incoming: () => request('/requests/incoming', { auth: 'user' }),
   get: (id) => request(`/requests/${id}`, { auth: false }),
   uploadSlip: (id, image, mime) =>
     request(`/requests/${id}/slip`, { method: 'POST', auth: 'user', body: { image, mime } }),
@@ -208,6 +217,10 @@ export const requestApi = {
     request(`/requests/${id}/accept`, {
       method: 'POST', auth: 'user', body: { donor_id: donorId },
     }),
+  decline: (id, donorId) =>
+    request(`/requests/${id}/decline`, {
+      method: 'POST', auth: 'user', body: { donor_id: donorId },
+    }),
   arrival: (id, donorId, showedUp) =>
     request(`/requests/${id}/arrival`, {
       method: 'POST', auth: 'user', body: { donor_id: donorId, showed_up: showedUp },
@@ -218,6 +231,56 @@ export const requestApi = {
     }),
   pingLogs: (requestId) =>
     request(`/ping-logs${requestId ? `?request_id=${requestId}` : ''}`, { auth: false }),
+}
+
+/* ── Varsity Node Leaderboard ────────────────────────────────────── */
+/** Public and unauthenticated — the board is meant to be readable by donors,
+ *  patients and passers-by alike, so none of these calls carry a session. */
+export const leaderboardApi = {
+  /** The 12 months the API publishes, ending with the one in progress. The
+   *  month picker is built from this rather than from the device clock, so a
+   *  wrong phone date can never offer a month that does not exist yet. */
+  months: () => request('/leaderboard/months', { auth: false }),
+  /** `month` is 'YYYY-MM'; omit it for the month in progress. */
+  board: (month) =>
+    request(`/leaderboard${month ? `?month=${encodeURIComponent(month)}` : ''}`, {
+      auth: false,
+    }),
+  universities: () => request('/leaderboard/universities', { auth: false }),
+  campus: (name, month) =>
+    request(
+      `/leaderboard/${encodeURIComponent(name)}${month ? `?month=${encodeURIComponent(month)}` : ''}`,
+      { auth: false },
+    ),
+}
+
+/* ── Golden Donor Verification ───────────────────────────────────── */
+/** Three confirmed donations earn a verified badge and priority placement on
+ *  ICU dispatches. Everything under /me acts on whoever holds the token —
+ *  there is no donor id to pass, so one donor can never move another's status. */
+export const goldenApi = {
+  /** The published thresholds. Open, so the terms can be read before signing up. */
+  rules: () => request('/golden/rules', { auth: false }),
+  /** A pure read: it reports the real status and deliberately does NOT count as
+   *  activity, or a dormant donor could never see their own suspension. */
+  me: () => request('/golden/me', { auth: 'user' }),
+  /** The explicit "I opened the app" signal — the restoration path for a
+   *  Golden Donor whose priority lapsed after six months of silence. */
+  heartbeat: () => request('/golden/me/heartbeat', { method: 'POST', auth: 'user' }),
+  /** Declares a relocation, and the return from one. Send '' to clear it and
+   *  fall back to the donor's GPS fix. */
+  setCity: (city) =>
+    request('/golden/me/city', { method: 'PUT', auth: 'user', body: { city } }),
+  /** The roll of honour. Signed-in users only — a name and a donation count is
+   *  fine among members, not something to publish to the open internet. */
+  roster: (status) =>
+    request(`/golden/roster${status ? `?status=${encodeURIComponent(status)}` : ''}`, {
+      auth: 'user',
+    }),
+  badge: (donorId) => request(`/golden/donors/${donorId}`, { auth: 'user' }),
+  /** Dry run: how this request's pings would be ordered. Writes nothing. */
+  priorityOrder: (requestId) =>
+    request(`/golden/requests/${requestId}/priority`, { auth: 'user' }),
 }
 
 /* ── Live En-Route Tracker ───────────────────────────────────────── */
@@ -313,4 +376,3 @@ export const cbcApi = {
   listSessions: () =>
     request('/cbc/sessions', { auth: 'user' }),
 }
-
