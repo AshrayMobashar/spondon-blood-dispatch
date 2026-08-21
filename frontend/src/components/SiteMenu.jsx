@@ -1,9 +1,59 @@
 import { NavLink } from 'react-router-dom'
-import { X } from 'lucide-react'
+import { X, LogOut } from 'lucide-react'
 import { routeGroups } from '../routes.js'
 import { accents } from './accents.js'
+import { getUser, getAdmin, getUserToken, getToken } from '../lib/api.js'
+
+function getRole() {
+  const admin = getAdmin()
+  if (admin?.role) return 'admin'
+  const adminToken = getToken()
+  if (adminToken) return 'admin'
+
+  const user = getUser()
+  if (user?.role) return user.role
+
+  const token = getUserToken()
+  if (token) {
+    try {
+      const base64Url = token.split('.')[1]
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+      const jsonPayload = decodeURIComponent(
+        window.atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+        }).join('')
+      )
+      const payload = JSON.parse(jsonPayload)
+      if (payload.role) return payload.role
+    } catch (e) {
+      console.error('Failed to parse JWT', e)
+    }
+  }
+  return 'guest'
+}
 
 export default function SiteMenu({ open, onClose }) {
+  const role = getRole()
+
+  const filteredGroups = routeGroups.map(group => {
+    const items = group.items.filter(item => {
+      // Hide auth items when logged in
+      if (role !== 'guest' && ['/login', '/register', '/register/patient', '/register/donor'].includes(item.to)) {
+        return false
+      }
+      return true
+    })
+
+    if (role === 'donor' && group.label === 'Patient / Family') return null
+    if (role === 'patient' && group.label === 'Donor') return null
+    if (role !== 'admin' && group.label === 'Admin / System') return null
+    if (role === 'admin' && (group.label === 'Donor' || group.label === 'Patient / Family')) return null
+
+    if (items.length === 0) return null
+
+    return { ...group, items }
+  }).filter(Boolean)
+
   return (
     <>
       {/* Backdrop */}
@@ -15,7 +65,7 @@ export default function SiteMenu({ open, onClose }) {
       />
       {/* Drawer */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-[300px] max-w-[85vw] overflow-y-auto border-r border-line bg-ink transition-transform ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-[300px] max-w-[85vw] flex-col overflow-y-auto border-r border-line bg-ink transition-transform ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -31,8 +81,8 @@ export default function SiteMenu({ open, onClose }) {
           </button>
         </div>
 
-        <nav className="space-y-6 p-5">
-          {routeGroups.map((group) => {
+        <nav className="flex-1 space-y-6 p-5">
+          {filteredGroups.map((group) => {
             const a = accents[group.color ?? 'primary']
             return (
               <div key={group.label}>
@@ -64,6 +114,24 @@ export default function SiteMenu({ open, onClose }) {
             )
           })}
         </nav>
+
+        {/* Logout button */}
+        <div className="border-t border-line p-5">
+          <button
+            type="button"
+            onClick={() => {
+              window.localStorage.removeItem('spondon_user_token')
+              window.localStorage.removeItem('spondon_user')
+              window.localStorage.removeItem('spondon_admin_token')
+              window.localStorage.removeItem('spondon_admin')
+              window.location.href = '/login'
+            }}
+            className="flex w-full items-center gap-3 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/20"
+          >
+            <LogOut className="size-4 shrink-0" />
+            Log out
+          </button>
+        </div>
       </aside>
     </>
   )
