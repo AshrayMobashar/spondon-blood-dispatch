@@ -160,6 +160,46 @@ GSM_PROXY_NUMBERS = [
 VOICE_BRIDGE_URL = os.getenv("VOICE_BRIDGE_URL")
 VOICE_BRIDGE_KEY = os.getenv("VOICE_BRIDGE_KEY")
 
+# ── The VOIP leg itself (WebRTC) ─────────────────────────────────────
+# The media never touches this server: the two browsers negotiate a peer
+# connection and the audio flows directly between them. All the backend lends
+# them is a signalling relay (`/ws/call`) and this list of ICE servers.
+#
+# STUN is free and public — it only tells a browser what its own public address
+# looks like from outside, so nothing private passes through it. That is enough
+# for the large majority of connections.
+#
+# TURN is the exception case: when both sides sit behind symmetric NAT (some
+# mobile carriers, hospital guest wifi) no direct path exists and the audio has
+# to be relayed. TURN relays cost bandwidth and so are not given away freely at
+# scale; leave these unset and calls simply fail on those networks — which is
+# exactly the corner case the GSM fallback below already exists to catch.
+STUN_SERVERS = [
+    s.strip()
+    for s in os.getenv(
+        "STUN_SERVERS",
+        "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302",
+    ).split(",")
+    if s.strip()
+]
+TURN_URLS = [u.strip() for u in os.getenv("TURN_URLS", "").split(",") if u.strip()]
+TURN_USERNAME = os.getenv("TURN_USERNAME")
+TURN_CREDENTIAL = os.getenv("TURN_CREDENTIAL")
+
+
+def ice_servers() -> list[dict]:
+    """RTCPeerConnection configuration handed to both participants."""
+    servers: list[dict] = []
+    if STUN_SERVERS:
+        servers.append({"urls": STUN_SERVERS})
+    if TURN_URLS:
+        servers.append({
+            "urls": TURN_URLS,
+            "username": TURN_USERNAME or "",
+            "credential": TURN_CREDENTIAL or "",
+        })
+    return servers
+
 # ── OTP ──────────────────────────────────────────────────────────────
 OTP_TTL_SECONDS = _int("OTP_TTL_SECONDS", 300)
 OTP_MAX_ATTEMPTS = _int("OTP_MAX_ATTEMPTS", 5)
@@ -244,6 +284,9 @@ def public_config() -> dict:
             "max_packet_loss_pct": CALL_MAX_PACKET_LOSS_PCT,
             "degraded_seconds": CALL_DEGRADED_SECONDS,
             "proxy_pool_size": len(GSM_PROXY_NUMBERS),
+            "media": "webrtc",
+            "stun_servers": len(STUN_SERVERS),
+            "turn_configured": bool(TURN_URLS),
         },
         "otp": {"length": OTP_LENGTH, "ttl_seconds": OTP_TTL_SECONDS},
     }

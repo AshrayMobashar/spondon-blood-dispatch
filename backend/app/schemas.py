@@ -1,10 +1,26 @@
 """Pydantic request-body schemas (the shapes Postman/clients POST/PUT)."""
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from pydantic import BaseModel, Field, field_validator
 
 PHONE_PATTERN = r"^01\d{9}$"      # Bangladeshi mobile, as typed without +880
 HHMM_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"   # 00:00–23:59, 24-hour
+
+# A donation is an event that has already happened, so a date in the future is
+# not a valid record — it would arm a cooldown that only starts counting down
+# later, or clear one that should still be locked. Small clock skew between a
+# phone and the server is tolerated; anything beyond that is rejected.
+FUTURE_DATE_TOLERANCE = timedelta(minutes=5)
+
+
+def reject_future_date(value: Optional[datetime], label: str) -> Optional[datetime]:
+    """Allow past and present datetimes only. `None` passes through untouched."""
+    if value is None:
+        return value
+    moment = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    if moment > datetime.now(timezone.utc) + FUTURE_DATE_TOLERANCE:
+        raise ValueError(f"{label} cannot be in the future — use today's date or earlier.")
+    return value
 
 
 # ── Registration, Authentication & Profile ───────────────────────────
@@ -16,6 +32,11 @@ class HealthProfileIn(BaseModel):
     last_donation_type: Optional[str] = Field(
         None, description="WHOLE_BLOOD | PLATELETS", examples=["WHOLE_BLOOD"]
     )
+
+    @field_validator("last_donation_date")
+    @classmethod
+    def _not_future(cls, v):
+        return reject_future_date(v, "Last donation date")
 
 
 class PendingRequest(BaseModel):
@@ -80,14 +101,28 @@ class WeightUpdate(BaseModel):
 class DonationRecord(BaseModel):
     """Logged after a donation — the event that arms the cooldown."""
     donation_type: str = Field(..., description="WHOLE_BLOOD | PLATELETS", examples=["PLATELETS"])
-    donated_at: Optional[datetime] = Field(None, description="Defaults to now")
+    donated_at: Optional[datetime] = Field(
+        None, description="Defaults to now. Must not be in the future."
+    )
+
+    @field_validator("donated_at")
+    @classmethod
+    def _not_future(cls, v):
+        return reject_future_date(v, "Donation date")
 
 
 class HealthProfileUpdate(BaseModel):
     """Donor edits their own records. Any subset."""
     weight_kg: Optional[float] = None
-    last_donation_date: Optional[datetime] = None
+    last_donation_date: Optional[datetime] = Field(
+        None, description="Past or present only — a donation cannot be dated ahead."
+    )
     last_donation_type: Optional[str] = Field(None, description="WHOLE_BLOOD | PLATELETS")
+
+    @field_validator("last_donation_date")
+    @classmethod
+    def _not_future(cls, v):
+        return reject_future_date(v, "Last donation date")
 
 
 class CertificateCreate(BaseModel):
@@ -96,6 +131,16 @@ class CertificateCreate(BaseModel):
     image: Optional[str] = Field(None, description="data: URI of the scanned certificate")
     issued_at: Optional[datetime] = Field(None, description="Timestamp printed on the document")
     corrected_donation_date: Optional[datetime] = None
+
+    @field_validator("issued_at")
+    @classmethod
+    def _issued_not_future(cls, v):
+        return reject_future_date(v, "Certificate issue date")
+
+    @field_validator("corrected_donation_date")
+    @classmethod
+    def _corrected_not_future(cls, v):
+        return reject_future_date(v, "Corrected donation date")
 
 
 class CertificateReview(BaseModel):

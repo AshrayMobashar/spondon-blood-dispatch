@@ -14,6 +14,14 @@ const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
 // authority and rejects an implausible weight regardless of what the UI allowed.
 const FALLBACK_RULES = { min_weight_kg: 50, plausible_weight_min_kg: 30, plausible_weight_max_kg: 250 }
 
+/** Today in the browser's local date. A donation already happened, so this is
+ *  the ceiling on the date picker — the engine rejects anything later. */
+const todayInput = () => {
+  const d = new Date()
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 10)
+}
+
 export default function DonorSignup() {
   const [step, setStep] = useState(1) // 1 phone · 2 otp · 3 health · 4 done
   const [form, setForm] = useState({
@@ -51,8 +59,11 @@ export default function DonorSignup() {
     form.weight !== '' &&
     (weightNum < rules.plausible_weight_min_kg || weightNum > rules.plausible_weight_max_kg)
   const underweight = weightNum >= rules.plausible_weight_min_kg && weightNum < rules.min_weight_kg
+  const today = todayInput()
+  const futureDonation = form.lastDonation !== '' && form.lastDonation > today
   const healthValid =
     form.name &&
+    !futureDonation &&
     weightNum >= rules.plausible_weight_min_kg &&
     weightNum <= rules.plausible_weight_max_kg
 
@@ -271,9 +282,20 @@ export default function DonorSignup() {
                   will be locked as a medical-risk factor.
                 </p>
               )}
+              {futureDonation && (
+                <p className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-[11px] text-primary">
+                  <TriangleAlert className="size-3.5 shrink-0" />
+                  A donation date cannot be in the future — pick today or an earlier date.
+                </p>
+              )}
               <div className="grid grid-cols-2 gap-4">
-                <Field label="Last Donation Date" hint="Leave blank if you've never donated">
-                  <Input type="date" value={form.lastDonation} onChange={set('lastDonation')} />
+                <Field label="Last Donation Date" hint="Today or earlier — leave blank if you've never donated">
+                  <Input
+                    type="date"
+                    value={form.lastDonation}
+                    onChange={set('lastDonation')}
+                    max={today}
+                  />
                 </Field>
                 <Field label="Donation Type" hint="Sets your cooldown length">
                   <Select value={form.donationType} onChange={set('donationType')} disabled={!form.lastDonation}>
