@@ -16,6 +16,7 @@ human queue, which is the specified fallback for an unreadable slip anyway.
 """
 import logging
 import math
+import os
 import secrets
 import time
 from typing import Optional

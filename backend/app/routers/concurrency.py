@@ -413,12 +413,12 @@ async def _process_ride_bounty(bounty: RideBounty):
                 # `send_push` takes an FCM token and a message dict. Or we can just use send_push
                 # Spondon's send_push signature: send_push(token: str, message: dict, bypass_dnd: bool)
                 if driver.fcm_token:
-                    await send_push(driver.fcm_token, {
-                        "title": "Community Bounty: Ride Home Needed!",
-                        "body": f"{bounty.donor_name} just finished a platelet donation at {bounty.hospital}. Can you offer them a ride home?",
-                        "type": "RIDE_BOUNTY",
-                        "bounty_id": str(bounty.id),
-                    })
+                    await send_push(
+                        driver.fcm_token,
+                        "Community Bounty: Ride Home Needed!",
+                        f"{bounty.donor_name} just finished a platelet donation at {bounty.hospital}. Can you offer them a ride home?",
+                        data={"type": "RIDE_BOUNTY", "bounty_id": str(bounty.id)}
+                    )
                     alerted += 1
 
     log.info("Ride Bounty %s: Alerted %d nearby drivers.", bounty.id, alerted)
@@ -446,11 +446,12 @@ async def _process_ride_bounty(bounty: RideBounty):
         # Send the code to the donor
         bounty_donor = await Account.get(bounty.donor_id)
         if bounty_donor and bounty_donor.fcm_token:
-            await send_push(bounty_donor.fcm_token, {
-                "title": "Thank you! Here is a ride home.",
-                "body": f"No community drivers are nearby, but we've got you covered. Use code {fresh_bounty.promo_code} on {promo['partner']} for a free ride home.",
-                "type": "PROMO_ISSUED"
-            })
+            await send_push(
+                bounty_donor.fcm_token,
+                "Thank you! Here is a ride home.",
+                f"No community drivers are nearby, but we've got you covered. Use code {fresh_bounty.promo_code} on {promo['partner']} for a free ride home.",
+                data={"type": "PROMO_ISSUED"}
+            )
         log.info("Ride Bounty %s timed out. Issued promo %s.", bounty.id, fresh_bounty.promo_code)
 
     # No-show → record it and apply the 2-in-a-year rule.
@@ -596,13 +597,17 @@ async def accept_bounty(bounty_id: str, account=Depends(get_optional_account)):
     
     # Alert the donor
     from ..integrations import send_push
-    donor = await Account.get(bounty.donor_id)
-    if donor and donor.fcm_token:
-        await send_push(donor.fcm_token, {
-            "title": "Your ride is here!",
-            "body": f"Community member {account.name} has offered you a ride home. Thank you for your donation!",
-            "type": "BOUNTY_ACCEPTED"
-        })
+    try:
+        donor = await Account.get(bounty.donor_id)
+        if donor and donor.fcm_token:
+            await send_push(
+                donor.fcm_token,
+                "Your ride is here!",
+                f"Community member {account.name} has offered you a ride home. Thank you for your donation!",
+                data={"type": "BOUNTY_ACCEPTED"}
+            )
+    except Exception as e:
+        log.warning(f"Could not alert donor for bounty {bounty.id}: {e}")
 
     return {
         "bounty_id": str(bounty.id),
@@ -611,3 +616,25 @@ async def accept_bounty(bounty_id: str, account=Depends(get_optional_account)):
         "hospital": bounty.hospital,
         "message": "You have accepted the bounty. The donor has been notified!"
     }
+from ..models import RideBounty
+
+@router.get("/bounties", summary="List open ride bounties")
+async def list_bounties(account=Depends(get_optional_account)):
+    if not account:
+        raise HTTPException(status_code=401, detail="Must be logged in.")
+    # Return OPEN bounties (plus ones accepted by this user)
+    open_bounties = await RideBounty.find({"status": "OPEN"}).to_list()
+    accepted_bounties = await RideBounty.find({"driver_id": str(account.id), "status": "ACCEPTED"}).to_list()
+    bounties = open_bounties + accepted_bounties
+    
+    out = []
+    for b in bounties:
+        out.append({
+            "id": str(b.id),
+            "status": b.status,
+            "donor_name": b.donor_name,
+            "hospital": b.hospital,
+            "expires_at": b.expires_at,
+            "driver_name": getattr(b, "driver_name", None)
+        })
+    return out

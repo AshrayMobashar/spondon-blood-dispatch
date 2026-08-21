@@ -47,6 +47,7 @@ export const routeGroups = [
       { to: '/donor/records', label: 'Update Records', icon: ClipboardEdit },
       { to: '/donor/weight', label: 'Weight Validation', icon: Scale },
       { to: '/donor/en-route', label: 'En-Route Sharing', icon: PhoneCall },
+      { to: '/donor/bounties', label: 'Ride Bounties', icon: Navigation },
     ],
   },
   {

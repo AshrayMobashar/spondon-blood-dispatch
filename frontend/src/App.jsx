@@ -9,6 +9,7 @@ import DonorSignup from './pages/auth/DonorSignup.jsx'
 import EligibilityEngine from './pages/donor/EligibilityEngine.jsx'
 import UpdateRecords from './pages/donor/UpdateRecords.jsx'
 import WeightValidation from './pages/donor/WeightValidation.jsx'
+import RideBounties from './pages/donor/RideBounties.jsx'
 import DoctorSlipOcr from './pages/patient/DoctorSlipOcr.jsx'
 import CbcTriage from './pages/patient/CbcTriage.jsx'
 import LiveTracker from './pages/patient/LiveTracker.jsx'
@@ -46,6 +47,7 @@ function App() {
       <Route path="/donor/weight" element={<WeightValidation />} />
       <Route path="/donor/en-route" element={<EnRoute />} />
       <Route path="/donor/en-route/:requestId" element={<EnRoute />} />
+      <Route path="/donor/bounties" element={<RideBounties />} />
 
       {/* Admin console (real backend + JWT) */}
       <Route path="/admin" element={<AdminConsole />} />

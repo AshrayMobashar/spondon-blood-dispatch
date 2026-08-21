@@ -83,7 +83,7 @@ export default function Ashray2() {
         patient_name: 'Mehedi Hassan',
         hospital: 'Dhaka Medical College',
         blood_type: 'O+',
-        component: 'WHOLE_BLOOD',
+        component: 'PLATELETS',
         units: 2,
         severity: 'CRITICAL',
         road_segment: 'Shahbagh',
