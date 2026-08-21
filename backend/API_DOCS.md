@@ -737,6 +737,171 @@ async def resolve_appeal(appeal_id: str, body: AppealResolve):
 
 ---
 
+# FEATURE 3 — Varsity Node Leaderboard
+
+A live, public ranking of universities by the number of emergency requests their students
+**fulfilled** in a calendar month. Scoring is on arrival, not acceptance — a donor who
+locks a request and never turns up scores nothing, which is what stops the board becoming
+a race to tap first.
+
+Seed the dummy dataset first: `python seed_leaderboard.py` (10 universities, ~120 student
+donors, 13 months of history, with ties deliberately engineered into two of the months).
+
+---
+
+## 3.1 Published months
+
+The window the board publishes: the last 12 calendar months, ending with the one in
+progress. Clients build their month picker from this rather than from the device clock,
+so a wrong phone date can never request a month that does not exist yet.
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard/months` |
+| **Headers** | *(none — the board is public)* |
+| **Params** | *(none)* |
+
+**Sample response `200`**
+```json
+{ "months": [
+    { "key": "2025-09", "label": "September 2025", "short_label": "Sep",
+      "year": 2025, "month": 9, "is_current": false },
+    { "key": "2026-08", "label": "August 2026", "short_label": "Aug",
+      "year": 2026, "month": 8, "is_current": true } ],
+  "current": "2026-08", "window_months": 12 }
+```
+
+---
+
+## 3.2 Monthly leaderboard  ⭐ core engine
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard?month=2026-03` |
+| **Headers** | *(none)* |
+| **Params** | Query: `month` — `YYYY-MM`. Omit for the month in progress. |
+
+Scoring runs as one database aggregation over the month's fulfilled requests:
+
+```python
+pipeline = [
+    {"$match": {"status": "FULFILLED",
+                "fulfilled_at": {"$gte": start, "$lt": end},
+                "secured_donor_university": {"$nin": [None, ""]}}},
+    {"$group": {"_id": "$secured_donor_university",
+                "fulfilled": {"$sum": 1},
+                # $avg skips nulls: a request accepted with no ping behind it
+                # scores a point but casts no vote on the tie-break.
+                "avg_response_seconds": {"$avg": "$response_seconds"},
+                "donor_ids": {"$addToSet": "$secured_donor_id"}}},
+]
+```
+
+Month boundaries are **local** (Asia/Dhaka) and converted to UTC before the query — a
+donation at 2 a.m. on 1 September in Dhaka belongs to September, not to August.
+
+**Sample response `200`** (abridged)
+```json
+{ "month": "2026-03", "label": "March 2026", "is_current_month": false,
+  "tie_break_rule": "Universities finishing level on fulfilled requests are separated by their average ping-to-acceptance time — the faster campus ranks higher.",
+  "totals": { "fulfilled": 67, "units": 82, "universities_scored": 10,
+              "universities_listed": 10, "donors": 51, "avg_response_seconds": 285.6 },
+  "ties": [12, 6, 5],
+  "entries": [
+    { "rank": 1, "university": "BRAC University", "short_name": "BRACU",
+      "fulfilled": 12, "units": 15, "donors": 10, "registered_students": 17,
+      "avg_response_seconds": 203.4, "avg_response_label": "3m 23s",
+      "fastest_response_label": "1m 38s", "responses_measured": 12,
+      "tied_with": ["Bangladesh University of Engineering and Technology",
+                    "University of Dhaka"],
+      "tie_broken": true,
+      "tie_break_note": "Level with … on 12 fulfilled — ranked higher on a faster 3m 23s average ping-to-acceptance.",
+      "previous_rank": 3, "movement": 2 } ] }
+```
+
+---
+
+## 3.3 The tie-break  ⭐ corner case
+
+Two universities finishing the month on the **exact same** number of fulfilled requests
+are separated by their average ping-to-acceptance time — the gap between the ping landing
+on a student's phone and that student securing the request — and the faster campus ranks
+higher. Without it the two would be frozen in whatever order the database happened to
+return, so the board would silently rank by insertion order and call it a result.
+
+```python
+def sort_key(e):
+    avg = e["avg_response_seconds"]
+    return (
+        -e["fulfilled"],                            # points first
+        avg if avg is not None else float("inf"),   # then the faster responder
+        e["university"],                            # deterministic if even that ties
+    )
+```
+
+A campus with no measured response times sorts last within its tie group: it has not
+shown it can answer faster, so it cannot claim the higher rank on that basis. Only a
+genuinely inseparable pair — same points **and** the same average — shares a rank.
+
+Every tied entry carries `tie_broken: true` and a `tie_break_note` stating exactly why it
+sits where it does, so the ranking is never something the reader has to take on trust.
+
+---
+
+## 3.4 Refusing an upcoming month  ⭐ corner case
+
+A future month is **rejected**, not answered with an empty board — an empty board reads
+as "nobody donated", which is a very different claim from "that month has not happened
+yet".
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard?month=2026-09` |
+
+**Sample response `400`**
+```json
+{ "detail": "September 2026 has not happened yet — the leaderboard only publishes months up to August 2026." }
+```
+
+Anything older than the 12-month window is refused the same way, and a malformed month
+(`?month=august`) returns a `400` naming the expected shape.
+
+---
+
+## 3.5 Varsity node roster
+
+Used by the board and by the campus picker at donor sign-up. Registration matches a
+submitted campus against this roster (full name **or** short name, case-insensitively)
+and rejects anything else with a `400` — free text would split one node into three on the
+board, each with a third of the score.
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard/universities` |
+
+**Sample response `200`**
+```json
+[ { "id": "6a59…", "name": "BRAC University", "short_name": "BRACU", "city": "Dhaka" } ]
+```
+
+---
+
+## 3.6 One campus's month
+
+| | |
+|---|---|
+| **URL** | `GET http://localhost:1184/api/leaderboard/{university}?month=2026-03` |
+| **Params** | Path: `university` — full name or short name (`BRACU`) |
+
+Returns that campus's single row plus its rank in context; `404` if it is not a
+registered node.
+
+**Privacy.** Every response here is campus totals only — the board never publishes a
+donor's name, phone number or location, the same line the dispatch radar draws in
+`app.zones`.
+
+---
+
 ## Endpoint summary
 
 ### Feature 1 — Smart Ping
@@ -769,3 +934,11 @@ async def resolve_appeal(appeal_id: str, body: AppealResolve):
 | 2.6 | GET | `/api/donors/{id}/reliability` |
 | 2.7 | POST | `/api/appeals` |
 | 2.8 | POST | `/api/appeals/{id}/resolve` |
+
+### Feature 3 — Varsity Node Leaderboard
+| # | Method | Endpoint |
+|---|--------|----------|
+| 3.1 | GET | `/api/leaderboard/months` |
+| 3.2 | GET | `/api/leaderboard?month=YYYY-MM` |
+| 3.5 | GET | `/api/leaderboard/universities` |
+| 3.6 | GET | `/api/leaderboard/{university}?month=YYYY-MM` |

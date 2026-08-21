@@ -225,6 +225,27 @@ export const requestApi = {
     request(`/ping-logs${requestId ? `?request_id=${requestId}` : ''}`, { auth: false }),
 }
 
+/* ── Varsity Node Leaderboard ────────────────────────────────────── */
+/** Public and unauthenticated — the board is meant to be readable by donors,
+ *  patients and passers-by alike, so none of these calls carry a session. */
+export const leaderboardApi = {
+  /** The 12 months the API publishes, ending with the one in progress. The
+   *  month picker is built from this rather than from the device clock, so a
+   *  wrong phone date can never offer a month that does not exist yet. */
+  months: () => request('/leaderboard/months', { auth: false }),
+  /** `month` is 'YYYY-MM'; omit it for the month in progress. */
+  board: (month) =>
+    request(`/leaderboard${month ? `?month=${encodeURIComponent(month)}` : ''}`, {
+      auth: false,
+    }),
+  universities: () => request('/leaderboard/universities', { auth: false }),
+  campus: (name, month) =>
+    request(
+      `/leaderboard/${encodeURIComponent(name)}${month ? `?month=${encodeURIComponent(month)}` : ''}`,
+      { auth: false },
+    ),
+}
+
 /* ── Admin console ───────────────────────────────────────────────── */
 export const adminApi = {
   login: (email, password) =>

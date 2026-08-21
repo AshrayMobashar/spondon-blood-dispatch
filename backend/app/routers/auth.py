@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from .. import config, integrations
 from ..dispatch import run_dispatch
 from ..eligibility import recalculate, summary, weight_is_plausible
+from ..leaderboard import resolve_university
 from ..models import (
     Account, BloodRequest, GeoPoint, HealthProfile, OtpChallenge,
     ROLE_DONOR, ROLE_PATIENT, BANNED, utcnow,
@@ -43,6 +44,7 @@ def _account_public(account: Account) -> dict:
         "phone_verified": account.phone_verified,
         "status": account.status,
         "address": account.address,
+        "university": account.university,
         # A shadow-banned user must see exactly what an ordinary user sees.
         "eligible": account.eligibility.eligible,
         # Where the client should land after signing in — a patient must never
@@ -274,6 +276,9 @@ async def register(body: AccountRegister):
         phone_verified=True,
         fcm_token=body.fcm_token,
         health=health,
+        # Only a donor can score for a campus, so a patient who sends one is
+        # simply not enrolled rather than being refused the account.
+        university=await resolve_university(body.university) if role == ROLE_DONOR else None,
         last_login_at=utcnow(),
     )
     recalculate(account)
@@ -302,6 +307,8 @@ async def update_me(body: ProfileUpdate, account: Account = Depends(get_current_
         account.name = body.name.strip()
     if body.address is not None:
         account.address = body.address.strip()
+    if body.university is not None:
+        account.university = await resolve_university(body.university)
     await account.save()
     return {
         "account": _account_public(account),

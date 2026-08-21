@@ -12,6 +12,7 @@ import {
   Activity,
   Droplet,
   Siren,
+  Trophy,
 } from 'lucide-react'
 
 /** Single source of truth for navigation. Route elements live in App.jsx. */
@@ -20,6 +21,9 @@ export const routeGroups = [
     label: 'General',
     items: [
       { to: '/', label: 'Home / Landing', icon: Home },
+      // Public: donors, patients and visitors all read the same board, so it
+      // sits in General rather than under a role.
+      { to: '/leaderboard', label: 'View Leaderboard', icon: Trophy },
       { to: '/login', label: 'Login', icon: LogIn },
       { to: '/register', label: 'Register', icon: UserPlus },
     ],

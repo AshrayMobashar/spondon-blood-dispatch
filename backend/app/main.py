@@ -21,7 +21,7 @@ from .dispatch import escalation_watcher
 from .realtime import feed
 
 log = logging.getLogger("spondon.main")
-from .routers import auth, smart_ping, donor_health, concurrency, admin
+from .routers import auth, smart_ping, donor_health, concurrency, admin, leaderboard
 
 PORT = config.PORT
 
@@ -52,7 +52,8 @@ app = FastAPI(
     description=(
         "Emergency blood-dispatch APIs — registration & OTP auth, the eligibility "
         "cooldown engine, Smart Ping, the expanding geo-ripple with its rare-blood "
-        "city-wide override, concurrency locking, and the admin console."
+        "city-wide override, concurrency locking, the Varsity Node Leaderboard, "
+        "and the admin console."
     ),
     lifespan=lifespan,
 )
@@ -106,6 +107,9 @@ app.include_router(donor_health.router, prefix="/api")
 app.include_router(smart_ping.router, prefix="/api", tags=["Module 1.2 — Smart Ping"])
 app.include_router(
     concurrency.router, prefix="/api", tags=["Module 2 — Dispatch, Concurrency & Slips"]
+)
+app.include_router(
+    leaderboard.router, prefix="/api", tags=["Module 3 — Varsity Node Leaderboard"]
 )
 app.include_router(admin.router, prefix="/api", tags=["Admin — Role & Access Management"])
 

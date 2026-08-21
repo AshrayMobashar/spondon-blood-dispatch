@@ -31,6 +31,7 @@ python -m venv .venv
 pip install -r requirements.txt
 cp .env.example .env
 python seed_admin.py                 # demo accounts, requests, one pending certificate
+python seed_leaderboard.py           # universities + 13 months of leaderboard history
 python -m app.main
 ```
 Server: `http://localhost:1184` · Swagger UI: `http://localhost:1184/docs`
@@ -79,7 +80,7 @@ backend/
     main.py            # FastAPI app, CORS, startup, GET /api/config
     config.py          # every tunable rule constant + integration keys
     db.py              # Motor client + Beanie init
-    models.py          # Account, BloodRequest, PingLog, Appeal, Admin,
+    models.py          # Account, BloodRequest, PingLog, Appeal, Admin, University,
                        #   OtpChallenge, MedicalCertificate, Escalation
     schemas.py         # Pydantic request bodies
     security.py        # bcrypt, JWTs (admin/user/registration-ticket), OTP hashing
@@ -87,15 +88,18 @@ backend/
     eligibility.py     # the cooldown / weight engine — sole writer of the flag
     dispatch.py        # gates → pool → reach → decision, plus escalation
     integrations.py    # SMS, FCM, OCR, Maps, blood-bank & NGO adapters
+    leaderboard.py     # varsity month windows, scoring aggregation, tie-break
     routers/
       auth.py          # OTP, registration, login, captured-request corner case
       donor_health.py  # eligibility, weight, donations, certificates
       smart_ping.py    # sleep mode, commute route, location, dispatch
       concurrency.py   # requests, slip OCR, atomic accept, arrivals, appeals
+      leaderboard.py   # public monthly varsity ranking + month window
       admin.py         # console: ripples, slips, moderation, certs, escalations
   requirements.txt
   .env.example
   seed_admin.py
+  seed_leaderboard.py
   smoke_test.py
   Spondon.postman_collection.json
   API_DOCS.md

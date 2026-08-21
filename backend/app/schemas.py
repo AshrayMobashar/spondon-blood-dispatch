@@ -63,6 +63,12 @@ class AccountRegister(BaseModel):
     name: str = Field(..., examples=["Ashray Mobashar"])
     role: str = Field("donor", description="donor | patient")
     blood_type: str = Field(..., examples=["O+"])
+    university: Optional[str] = Field(
+        None,
+        description="Campus this donor scores for on the Varsity Node Leaderboard. "
+                    "Full name or short name; omit for a non-student.",
+        examples=["BRAC University"],
+    )
     fcm_token: Optional[str] = None
     health: Optional[HealthProfileIn] = None
 
@@ -99,6 +105,9 @@ class CertificateReview(BaseModel):
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     address: Optional[str] = None
+    university: Optional[str] = Field(
+        None, description='Varsity node to score for; "" leaves the node.'
+    )
 
 
 # ── Feature 1 — Smart Ping ───────────────────────────────────────────

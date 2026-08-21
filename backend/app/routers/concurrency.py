@@ -267,6 +267,13 @@ async def accept_request(request_id: str, body: AcceptBody, logged_in: Optional[
             detail={"message": "You cannot accept this request.", "reason": why},
         )
 
+    # Leaderboard bookkeeping, resolved before the lock so it can ride along in
+    # the same atomic write: the campus that will score if this donor shows up,
+    # and how long they took to answer the ping — the number that breaks a
+    # month-end tie between two universities on equal points.
+    secured_at = utcnow()
+    response_seconds = await _ping_to_acceptance(request_id, str(donor.id), secured_at)
+
     collection = get_collection(BloodRequest)
     updated = await collection.find_one_and_update(
         {"_id": oid, "status": "OPEN"},              # compare
@@ -275,7 +282,9 @@ async def accept_request(request_id: str, body: AcceptBody, logged_in: Optional[
             "secured_donor_id": str(donor.id),
             "secured_donor_name": donor.name,
             "secured_donor_phone": donor.phone,
-            "secured_at": utcnow(),
+            "secured_donor_university": donor.university,
+            "response_seconds": response_seconds,
+            "secured_at": secured_at,
         }},
         return_document=ReturnDocument.AFTER,
     )
@@ -316,6 +325,8 @@ async def accept_request(request_id: str, body: AcceptBody, logged_in: Optional[
         "secured_donor_id": updated["secured_donor_id"],
         "secured_donor_name": updated["secured_donor_name"],
         "secured_at": updated["secured_at"].isoformat(),
+        "varsity_node": updated.get("secured_donor_university"),
+        "response_seconds": updated.get("response_seconds"),
     }
 
 
@@ -354,13 +365,17 @@ async def record_arrival(request_id: str, body: ArrivalBody):
     donor = await _get_donor(body.donor_id)
 
     if body.showed_up:
+        now = utcnow()
         req.status = "FULFILLED"
+        # The scoring event for the Varsity Node Leaderboard. It is the arrival
+        # that scores, never the acceptance — otherwise a campus could climb the
+        # board by tapping Accept fastest and never turning up.
+        req.fulfilled_at = now
         await req.save()
 
         # A fulfilled request *is* a donation, so it arms the cooldown here —
         # platelets for 14 days, anything else for 120.
         kind = config.PLATELETS if req.component.upper() == "PLATELETS" else config.WHOLE_BLOOD
-        now = utcnow()
         donor.health.last_donation_date = now
         donor.health.last_donation_type = kind
         donor.health.donation_count += 1
@@ -491,6 +506,33 @@ async def resolve_appeal(appeal_id: str, body: AppealResolve):
 
 
 # ── helpers ──────────────────────────────────────────────────────────
+async def _ping_to_acceptance(
+    request_id: str, donor_id: str, accepted_at: datetime
+) -> Optional[float]:
+    """Seconds between this donor's ping for this request and their acceptance.
+
+    This is the number the Varsity Node Leaderboard breaks a month-end tie on.
+    The *earliest* ping is the one that counts: a donor who was pinged at 02:10
+    and again when the ripple widened at 02:30 was reachable from 02:10, and
+    measuring from the later ping would flatter both them and their campus.
+    Returns None when no ping was logged — a request accepted straight from the
+    dashboard has no ping to measure from, and guessing a number there would
+    quietly corrupt the tie-break.
+    """
+    ping = await PingLog.find(
+        PingLog.request_id == request_id,
+        PingLog.donor_id == donor_id,
+        PingLog.pinged == True,  # noqa: E712
+    ).sort(PingLog.created_at).first_or_none()
+    if ping is None:
+        return None
+
+    pinged_at = ping.created_at
+    if pinged_at.tzinfo is None:          # Mongo hands datetimes back naive
+        pinged_at = pinged_at.replace(tzinfo=accepted_at.tzinfo)
+    return max(0.0, (accepted_at - pinged_at).total_seconds())
+
+
 def _within_year(dt, now):
     """Compare tolerating naive/aware timestamps read back from Mongo."""
     if dt.tzinfo is None:

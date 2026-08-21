@@ -13,6 +13,7 @@ import WeightValidation from './pages/donor/WeightValidation.jsx'
 import DonorProfile from './pages/donor/DonorProfile.jsx'
 import IncomingRequests from './pages/donor/IncomingRequests.jsx'
 import DoctorSlipOcr from './pages/patient/DoctorSlipOcr.jsx'
+import VarsityLeaderboard from './pages/leaderboard/VarsityLeaderboard.jsx'
 import GeoRipple from './pages/admin/GeoRipple.jsx'
 import PingLog from './pages/admin/PingLog.jsx'
 import RareBlood from './pages/admin/RareBlood.jsx'
@@ -30,6 +31,9 @@ function App() {
       <Route path="/register" element={<Register />} />
       <Route path="/register/patient" element={<PatientSignup />} />
       <Route path="/register/donor" element={<DonorSignup />} />
+
+      {/* Public — donors, patients and anyone else can read the board */}
+      <Route path="/leaderboard" element={<VarsityLeaderboard />} />
 
       {/* Patient / Family */}
       <Route path="/patient/ocr" element={<DoctorSlipOcr />} />

@@ -106,6 +106,17 @@ async def patch_request(request_id: str, body: RequestPatch, admin: Admin = Depe
     changes = body.model_dump(exclude_unset=True)
     for field, value in changes.items():
         setattr(req, field, value)
+
+    # The Varsity Node Leaderboard scores on `fulfilled_at`, so an admin
+    # correcting a status by hand has to move that stamp with it — otherwise a
+    # request marked fulfilled here would never score, and one reverted out of
+    # FULFILLED would keep scoring forever.
+    if body.status is not None:
+        if req.status == "FULFILLED" and req.fulfilled_at is None:
+            req.fulfilled_at = utcnow()
+        elif req.status != "FULFILLED":
+            req.fulfilled_at = None
+
     await req.save()
     return serialize(req)
 
