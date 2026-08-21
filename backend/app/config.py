@@ -252,12 +252,17 @@ TWILIO_FROM = os.getenv("TWILIO_FROM")               # e.g. +8801XXXXXXXXX
 FCM_SERVER_KEY = os.getenv("FCM_SERVER_KEY")         # Firebase Cloud Messaging
 FCM_ENDPOINT = os.getenv("FCM_ENDPOINT", "https://fcm.googleapis.com/fcm/send")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")         # doctor's-slip OCR
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")         # doctor's-slip OCR + CBC triage
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 # Below this confidence a slip cannot be auto-approved and goes to the human
 # review queue instead of being rejected.
 OCR_CONFIDENCE_THRESHOLD = _float("OCR_CONFIDENCE_THRESHOLD", 0.75)
+
+# ── CBC Triage (platelet-trend analysis) ─────────────────────────────
+# Minimum number of valid CBC uploads in a session before the AI issues a
+# HOLD_OFF or DISPATCH_NOW verdict. Fewer than this yields INCONCLUSIVE.
+CBC_MIN_REPORTS = _int("CBC_MIN_REPORTS", 2)
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")   # driving-route distance
 BLOOD_BANK_API_URL = os.getenv("BLOOD_BANK_API_URL")     # national registry
@@ -323,4 +328,5 @@ def public_config() -> dict:
             "turn_configured": bool(TURN_URLS),
         },
         "otp": {"length": OTP_LENGTH, "ttl_seconds": OTP_TTL_SECONDS},
+        "cbc_triage": {"min_reports": CBC_MIN_REPORTS},
     }

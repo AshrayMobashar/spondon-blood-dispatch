@@ -45,6 +45,7 @@ def _account_public(account: Account) -> dict:
         "status": account.status,
         "address": account.address,
         "university": account.university,
+        "vehicle_type": getattr(account, "vehicle_type", "none"),
         # A shadow-banned user must see exactly what an ordinary user sees.
         "eligible": account.eligibility.eligible,
         # Where the client should land after signing in — a patient must never

@@ -160,6 +160,8 @@ export const donorApi = {
   certificates: (id) => request(`/donors/${id}/certificates`, { auth: 'user' }),
   uploadCertificate: (id, body) =>
     request(`/donors/${id}/certificates`, { method: 'POST', auth: 'user', body }),
+  updateVehicle: (donorId, vehicle_type) =>
+    request(`/donors/${donorId}/vehicle`, { method: 'PATCH', auth: 'user', body: { vehicle_type } }),
 
   sleepMode: (id) => request(`/donors/${id}/sleep-mode`, { auth: 'user' }),
   saveSleepMode: (id, body) =>
@@ -349,4 +351,28 @@ export const adminApi = {
     request(`/admin/appeals${status ? `?status=${status}` : ''}`),
   resolveAppeal: (id, action, adminName) =>
     request(`/appeals/${id}/resolve`, { method: 'POST', body: { action, admin: adminName || 'admin' } }),
+}
+
+/* ── CBC Report Triage ───────────────────────────────────────────── */
+/** Successive CBC uploads let the AI track a platelet trend and advise the
+ *  family to hold off or proceed with a dispatch request. All calls require
+ *  a patient JWT. */
+export const cbcApi = {
+  /** Start a new triage session. Returns { id, verdict, uploads: [] }. */
+  createSession: () =>
+    request('/cbc/sessions', { method: 'POST', auth: 'user' }),
+  /** Upload one CBC report photo. image must be a data: URI or raw base64.
+   *  Returns the full updated session + last_upload AI details. */
+  upload: (sessionId, image, mime) =>
+    request(`/cbc/sessions/${sessionId}/upload`, {
+      method: 'POST',
+      auth: 'user',
+      body: { image, mime },
+    }),
+  /** Fetch one session with all uploads and the current verdict. */
+  getSession: (sessionId) =>
+    request(`/cbc/sessions/${sessionId}`, { auth: 'user' }),
+  /** All sessions for the current patient, newest first. */
+  listSessions: () =>
+    request('/cbc/sessions', { auth: 'user' }),
 }

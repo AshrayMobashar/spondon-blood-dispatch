@@ -393,3 +393,6 @@ class DonorPatch(BaseModel):
     name: Optional[str] = None
     blood_type: Optional[str] = None
     phone: Optional[str] = None
+
+class VehicleUpdate(BaseModel):
+    vehicle_type: str = Field(..., description="none | bike | car")

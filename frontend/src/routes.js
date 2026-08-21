@@ -12,6 +12,7 @@ import {
   Activity,
   Droplet,
   Siren,
+  ActivitySquare,
   Trophy,
   Award,
   Navigation,
@@ -37,6 +38,7 @@ export const routeGroups = [
     items: [
       { to: '/register/patient', label: 'Patient Sign-up', icon: UserPlus },
       { to: '/patient/ocr', label: "Doctor's Slip OCR", icon: FileText },
+      { to: '/patient/cbc-triage', label: 'CBC Report Triage', icon: ActivitySquare },
       { to: '/patient/track', label: 'Live En-Route Tracker', icon: Navigation },
     ],
   },

@@ -28,7 +28,7 @@ from .realtime import call_room, feed, trip_room
 log = logging.getLogger("spondon.main")
 from .routers import (
     auth, smart_ping, donor_health, concurrency, admin, leaderboard, tracking, calling,
-    golden,
+    golden, cbc_triage,
 )
 
 PORT = config.PORT
@@ -85,7 +85,8 @@ app = FastAPI(
         "Emergency blood-dispatch APIs — registration & OTP auth, the eligibility "
         "cooldown engine, Smart Ping, the expanding geo-ripple with its rare-blood "
         "city-wide override, concurrency locking, the Varsity Node Leaderboard, "
-        "Golden Donor verification with ICU priority placement, and the admin console."
+        "Golden Donor verification with ICU priority placement, CBC report triage, "
+        "and the admin console."
     ),
     lifespan=lifespan,
 )
@@ -152,6 +153,7 @@ app.include_router(
 app.include_router(
     golden.router, prefix="/api", tags=["Module 3.3 — Golden Donor Verification"]
 )
+app.include_router(cbc_triage.router, prefix="/api", tags=["CBC Triage"])
 app.include_router(admin.router, prefix="/api", tags=["Admin — Role & Access Management"])
 
 

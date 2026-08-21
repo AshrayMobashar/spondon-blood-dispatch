@@ -520,6 +520,7 @@ def integration_status() -> dict:
         "sms_provider": sms_provider(),
         "fcm": push_configured(),
         "ocr": ocr_configured(),
+        "cbc": cbc_configured(),
         # A key being present is not the same as it working. If the last road
         # -distance call was refused, say so rather than advertising a live
         # integration the engine is quietly falling back from.
@@ -528,4 +529,211 @@ def integration_status() -> dict:
         "maps_error": _maps_error,
         "blood_bank": blood_bank_configured(),
         "ngo_hotline": ngo_configured(),
+        "ride_sharing": ride_sharing_configured(),
     }
+
+
+# ── OpenAI vision (CBC platelet-trend triage) ─────────────────────────
+def cbc_configured() -> bool:
+    """True when the same OpenAI key used for slip OCR is present."""
+    return bool(config.OPENAI_API_KEY)
+
+
+_CBC_SYSTEM = (
+    "You are a medical AI assistant reading a Complete Blood Count (CBC) laboratory report "
+    "from a Bangladeshi hospital. "
+    "Reply with strict JSON only, no prose, matching this schema exactly: "
+    '{"is_cbc_report": bool, '
+    '"platelet_count": number|null, '
+    '"platelet_unit": string|null, '
+    '"report_date": string|null, '
+    '"patient_name": string|null, '
+    '"confidence": number, '
+    '"notes": string}. '
+    "Rules: "
+    "1. Set is_cbc_report to false if the image is NOT a medical CBC/haematology lab report "
+    "(e.g. if it is a food receipt, selfie, prescription, or unrelated document). "
+    "2. platelet_count must be the numerical value only (e.g. 95 for 95×10³/µL). "
+    "Set it to null if the value is illegible or absent. "
+    "3. report_date must be ISO 8601 (YYYY-MM-DD) or null. "
+    "4. confidence is 0.0–1.0 reflecting overall legibility. "
+    "5. notes must explain what you saw, especially if is_cbc_report is false — "
+    "be specific (e.g. 'This appears to be a grocery receipt, not a lab report.')."
+)
+
+
+async def analyse_cbc(image_b64: str, mime: str, existing_counts: list) -> dict:
+    """Parse a CBC report photo and classify the platelet trend.
+
+    `existing_counts` is a list of prior float platelet values (oldest first)
+    from the current triage session. The trend is computed here — not by the
+    model — so the verdict logic is deterministic and auditable.
+
+    Returns a dict with keys:
+        is_cbc_report, platelet_count, report_date, patient_name,
+        trend, confidence, recommendation, notes, simulated, verdict
+    """
+    if not cbc_configured():
+        return {
+            "is_cbc_report": None,
+            "platelet_count": None,
+            "report_date": None,
+            "patient_name": None,
+            "trend": "INSUFFICIENT_DATA",
+            "confidence": None,
+            "recommendation": (
+                "CBC triage engine is not configured (OPENAI_API_KEY unset). "
+                "Results are inconclusive — please have a doctor review the reports manually."
+            ),
+            "notes": "No OpenAI key configured — routed to inconclusive.",
+            "simulated": True,
+            "verdict": "INCONCLUSIVE",
+        }
+
+    payload = {
+        "model": config.OPENAI_MODEL,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": _CBC_SYSTEM},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Read this CBC lab report and extract the platelet count."},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
+            ]},
+        ],
+    }
+    headers = {"Authorization": f"Bearer {config.OPENAI_API_KEY}"}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0)) as client:
+            res = await client.post(
+                f"{config.OPENAI_BASE_URL}/chat/completions", json=payload, headers=headers
+            )
+        res.raise_for_status()
+        import json
+        content = res.json()["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+    except Exception as exc:
+        log.warning("CBC triage OpenAI call failed: %s", exc)
+        return {
+            "is_cbc_report": None,
+            "platelet_count": None,
+            "report_date": None,
+            "patient_name": None,
+            "trend": "INSUFFICIENT_DATA",
+            "confidence": None,
+            "recommendation": "AI engine error — please try again or consult a doctor.",
+            "notes": f"OpenAI error: {exc}",
+            "simulated": False,
+            "verdict": "INCONCLUSIVE",
+        }
+
+    # ── Schema-mismatch guard ────────────────────────────────────────
+    if not parsed.get("is_cbc_report"):
+        reason = parsed.get("notes") or "The uploaded image does not appear to be a CBC lab report."
+        return {
+            "is_cbc_report": False,
+            "platelet_count": None,
+            "report_date": parsed.get("report_date"),
+            "patient_name": parsed.get("patient_name"),
+            "trend": "INSUFFICIENT_DATA",
+            "confidence": parsed.get("confidence"),
+            "recommendation": (
+                f"{reason} Please upload a clear photograph of a Complete Blood Count "
+                "laboratory report."
+            ),
+            "notes": reason,
+            "simulated": False,
+            "verdict": "INVALID_IMAGE",
+        }
+
+    # ── Platelet count extraction ────────────────────────────────────
+    raw_count = parsed.get("platelet_count")
+    platelet_count: Optional[float] = None
+    if isinstance(raw_count, (int, float)) and raw_count > 0:
+        platelet_count = float(raw_count)
+
+    # ── Trend computation (deterministic, not delegated to the model) ─
+    all_counts = [c for c in existing_counts if c is not None] + (
+        [platelet_count] if platelet_count is not None else []
+    )
+
+    trend = "INSUFFICIENT_DATA"
+    verdict = "INCONCLUSIVE"
+    recommendation = (
+        f"Upload at least {config.CBC_MIN_REPORTS} readable CBC reports for a trend verdict."
+    )
+
+    if len(all_counts) >= config.CBC_MIN_REPORTS:
+        # Compare last two readable readings.
+        delta = all_counts[-1] - all_counts[-2]
+        if delta < -5:          # strictly falling (>5 k/µL drop)
+            trend = "FALLING"
+            verdict = "DISPATCH_NOW"
+            recommendation = (
+                f"Platelet count has dropped from {all_counts[-2]:.0f} to "
+                f"{all_counts[-1]:.0f} ×10³/µL — the trend is declining. "
+                "We recommend proceeding with an emergency dispatch request to secure a donor "
+                "before the count drops further."
+            )
+        elif delta > 5:         # clearly rising
+            trend = "RISING"
+            verdict = "HOLD_OFF"
+            recommendation = (
+                f"Platelet count has risen from {all_counts[-2]:.0f} to "
+                f"{all_counts[-1]:.0f} ×10³/µL — the body appears to be recovering naturally. "
+                "Consider holding off on a dispatch request to preserve volunteer resources for "
+                "patients whose counts are still collapsing. Continue monitoring."
+            )
+        else:                   # within ±5 — stable
+            trend = "STABLE"
+            verdict = "HOLD_OFF"
+            recommendation = (
+                f"Platelet count is stable around {all_counts[-1]:.0f} ×10³/µL. "
+                "The trend suggests natural recovery or a plateau. "
+                "Hold off on dispatching and continue monitoring every 12–24 hours."
+            )
+
+    conf = parsed.get("confidence")
+    if not isinstance(conf, (int, float)) or not 0.0 <= float(conf) <= 1.0:
+        conf = None
+
+    return {
+        "is_cbc_report": True,
+        "platelet_count": platelet_count,
+        "report_date": parsed.get("report_date"),
+        "patient_name": parsed.get("patient_name"),
+        "trend": trend,
+        "confidence": float(conf) if conf is not None else None,
+        "recommendation": recommendation,
+        "notes": parsed.get("notes") or "",
+        "simulated": False,
+        "verdict": verdict,
+    }
+
+
+# ── Ride-sharing Partner Integration (Pathao / Uber) ──────────────────
+def ride_sharing_configured() -> bool:
+    """True when a partner API key for ride subsidization is present."""
+    return bool(os.getenv("RIDE_PARTNER_API_KEY"))
+
+async def generate_ride_promo(hospital: str) -> dict:
+    """Generate a digital promo code for a subsidized ride home.
+    Returns: {"promo_code": str, "partner": str, "simulated": bool}
+    """
+    if not ride_sharing_configured():
+        return {
+            "promo_code": "SPONDON-HERO-MOCK",
+            "partner": "Pathao (Simulated)",
+            "simulated": True,
+        }
+    
+    # In a real integration, we would POST to the partner's B2B voucher API.
+    # For now, simulate the B2B API response.
+    import uuid
+    code = str(uuid.uuid4())[:8].upper()
+    return {
+        "promo_code": f"PATHAO-{code}",
+        "partner": "Pathao",
+        "simulated": False,
+    }
+

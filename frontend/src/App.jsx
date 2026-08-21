@@ -10,6 +10,7 @@ import EligibilityEngine from './pages/donor/EligibilityEngine.jsx'
 import UpdateRecords from './pages/donor/UpdateRecords.jsx'
 import WeightValidation from './pages/donor/WeightValidation.jsx'
 import DoctorSlipOcr from './pages/patient/DoctorSlipOcr.jsx'
+import CbcTriage from './pages/patient/CbcTriage.jsx'
 import VarsityLeaderboard from './pages/leaderboard/VarsityLeaderboard.jsx'
 import LiveTracker from './pages/patient/LiveTracker.jsx'
 import EnRoute from './pages/donor/EnRoute.jsx'
@@ -40,6 +41,7 @@ function App() {
 
       {/* Patient / Family */}
       <Route path="/patient/ocr" element={<DoctorSlipOcr />} />
+      <Route path="/patient/cbc-triage" element={<CbcTriage />} />
       {/* Both accept the request id in the path or as ?request=… — a family
           following a push notification has one, a family arriving cold does not. */}
       <Route path="/patient/track" element={<LiveTracker />} />

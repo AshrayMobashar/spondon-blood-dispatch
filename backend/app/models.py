@@ -11,6 +11,7 @@ Collections, by the feature that owns them:
   Module 3.1 - University, Account.university, BloodRequest.secured_donor_university
                / response_seconds / fulfilled_at (Varsity Node Leaderboard)
   Module 3.3 - Account.golden, BloodRequest.icu (Golden Donor Verification)
+  CBC Triage - CbcReport / CbcUpload; Ride Bounty - RideBounty, Account.vehicle_type
   Admin      - Admin, Account.status (ban / shadow ban)
 """
 from datetime import datetime, timezone
@@ -249,6 +250,7 @@ class Account(Document):
     sleep_mode: SleepMode = Field(default_factory=SleepMode)
     commute_route: Optional[CommuteRoute] = None
     current_location: Optional[GeoPoint] = None
+    vehicle_type: str = "none"            # none | bike | car (for ride bounty)
     # ── Module 2.2 — accountability ──
     reliability: Reliability = Field(default_factory=Reliability)
     # ── Module 3.3 — Golden Donor Verification ──
@@ -274,6 +276,32 @@ class Account(Document):
 
 # Backwards-compatible alias — the same class, under its original name.
 Donor = Account
+
+# Ride Bounty states
+BOUNTY_OPEN = "OPEN"
+BOUNTY_ACCEPTED = "ACCEPTED"
+BOUNTY_PROMO_GENERATED = "PROMO_GENERATED"
+
+class RideBounty(Document):
+    """A community bounty generated when a donor completes a platelet donation.
+    Alerts nearby drivers to offer a free ride home. If no one accepts within
+    15 minutes, a digital promo code is automatically generated."""
+    request_id: str
+    donor_id: str
+    donor_name: str
+    hospital: str
+    hospital_location: GeoPoint
+    status: str = BOUNTY_OPEN
+    driver_id: Optional[str] = None
+    driver_name: Optional[str] = None
+    promo_code: Optional[str] = None
+    accepted_at: Optional[datetime] = None
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "ride_bounties"
+
 
 
 class BloodRequest(Document):
@@ -528,3 +556,49 @@ class Escalation(Document):
 
     class Settings:
         name = "escalations"
+
+
+# ── CBC Triage (platelet-trend analysis) ────────────────────────────
+# Verdict constants.
+CBC_HOLD_OFF      = "HOLD_OFF"       # trend flat/rising → natural recovery
+CBC_DISPATCH_NOW  = "DISPATCH_NOW"   # trend strictly falling → counts collapsing
+CBC_INCONCLUSIVE  = "INCONCLUSIVE"   # not enough readable reports yet
+CBC_INVALID_IMAGE = "INVALID_IMAGE"  # uploaded image is not a CBC/lab report
+
+
+class CbcUpload(BaseModel):
+    """One photograph of a CBC report, as parsed by the AI.
+
+    `platelet_count` is None when the AI could not read the value (blurred,
+    folded, wrong page). That upload is stored for auditability but excluded
+    from the trend calculation.
+    """
+    image_hash: str                          # SHA-256 — duplicate guard
+    platelet_count: Optional[float] = None  # ×10³/µL as printed on the report
+    report_date: Optional[str] = None       # ISO 8601 date string on the form
+    patient_name: Optional[str] = None      # as read off this particular sheet
+    trend_at_upload: Optional[str] = None   # RISING | STABLE | FALLING | INSUFFICIENT_DATA
+    confidence: Optional[float] = None      # 0.0–1.0 from the AI
+    ai_notes: Optional[str] = None          # raw AI commentary
+    is_cbc_report: bool = True              # False = invalid image, halts processing
+    simulated: bool = False                 # True when no OpenAI key is configured
+    uploaded_at: datetime = Field(default_factory=utcnow)
+
+
+class CbcReport(Document):
+    """A triage session grouping successive CBC uploads for one patient.
+
+    The family uploads reports one at a time; after each upload the verdict is
+    recomputed from all valid readings in the session.  The session lives until
+    the family closes or a new one is started — there is no automatic expiry,
+    because a dengue patient's counts may need monitoring over several days.
+    """
+    patient_id: str                          # Account.id of the submitting user
+    uploads: List[CbcUpload] = []
+    verdict: str = CBC_INCONCLUSIVE          # current trend verdict
+    verdict_reason: Optional[str] = None     # AI-generated explanation
+    verdict_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+    class Settings:
+        name = "cbc_reports"

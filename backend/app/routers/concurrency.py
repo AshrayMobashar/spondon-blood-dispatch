@@ -8,6 +8,9 @@ admin.
 import base64
 import binascii
 import hashlib
+import logging
+import asyncio
+from asyncio import create_task
 from datetime import timedelta, datetime
 from difflib import SequenceMatcher
 from typing import Optional
@@ -21,7 +24,7 @@ from ..db import get_collection
 from ..dispatch import is_dispatchable, run_dispatch
 from ..eligibility import recalculate
 from ..models import (
-    Account, BloodRequest, Appeal, GeoPoint, PingLog, SHADOW_BANNED,
+    Account, BloodRequest, Appeal, GeoPoint, PingLog, RideBounty, SHADOW_BANNED,
     TRIP_ARRIVED, TRIP_CANCELLED,
 )
 from ..schemas import (
@@ -35,6 +38,8 @@ from ..tracking import public_trip
 from ..zones import zone_of
 from .calling import close_sessions_for_request, open_session
 from .tracking import start_trip
+
+log = logging.getLogger("spondon.concurrency")
 
 router = APIRouter()
 
@@ -426,6 +431,23 @@ async def record_arrival(request_id: str, body: ArrivalBody):
         golden_engine.recalculate(donor, now=now)
         await donor.save()
 
+        # ── Post-Donation Ride Community Bounty ──
+        # Platelet donors leave depleted; the bounty asks nearby drivers for a
+        # lift home and falls back to a promo code when nobody answers.
+        if kind == config.PLATELETS and req.hospital_location:
+            bounty = RideBounty(
+                request_id=str(req.id),
+                donor_id=str(donor.id),
+                donor_name=donor.name,
+                hospital=req.hospital,
+                hospital_location=req.hospital_location,
+                expires_at=now + timedelta(minutes=15),
+            )
+            await bounty.insert()
+            log.info("Platelet donation completed — created Ride Bounty %s", bounty.id)
+            # Fire and forget the background watcher + alerting.
+            create_task(_process_ride_bounty(bounty))
+
         return {
             "request_id": str(req.id),
             "donor_id": str(donor.id),
@@ -585,3 +607,64 @@ def _within_year(dt, now):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=now.tzinfo)
     return dt > now - ONE_YEAR
+
+
+# ── Ride Bounty Processing ────────────────────────────────────────────────
+async def _process_ride_bounty(bounty: RideBounty):
+    """Alerts nearby drivers and generates a promo if no one accepts."""
+    from ..integrations import send_push, generate_ride_promo, haversine_km
+
+    # 1. Find nearby community members with a vehicle (within 5km)
+    drivers = await Account.find(Account.vehicle_type.in_(["car", "bike"]), Account.status == "ACTIVE").to_list()
+    alerted = 0
+    for driver in drivers:
+        if driver.id == bounty.donor_id:
+            continue # don't alert the donor themselves
+        
+        # Check distance if we have their location
+        if driver.current_location:
+            dist = haversine_km(
+                bounty.hospital_location.lat, bounty.hospital_location.lng,
+                driver.current_location.lat, driver.current_location.lng
+            )
+            if dist <= 5.0:
+                # `send_push` takes an FCM token and a message dict. Or we can just use send_push
+                # Spondon's send_push signature: send_push(token: str, message: dict, bypass_dnd: bool)
+                if driver.fcm_token:
+                    await send_push(driver.fcm_token, {
+                        "title": "Community Bounty: Ride Home Needed!",
+                        "body": f"{bounty.donor_name} just finished a platelet donation at {bounty.hospital}. Can you offer them a ride home?",
+                        "type": "RIDE_BOUNTY",
+                        "bounty_id": str(bounty.id),
+                    })
+                    alerted += 1
+
+    log.info("Ride Bounty %s: Alerted %d nearby drivers.", bounty.id, alerted)
+
+    # 2. Wait out the 15-minute window in 30-second steps, so a driver who
+    #    accepts early stops the promo from being issued behind their back.
+    loops = 30 # 30 * 30s = 15 minutes
+    for _ in range(loops):
+        await asyncio.sleep(30)
+        fresh_bounty = await RideBounty.get(bounty.id)
+        if not fresh_bounty or fresh_bounty.status == "ACCEPTED":
+            log.info("Ride Bounty %s was accepted.", bounty.id)
+            return
+
+    # 3. If still OPEN after 15 minutes, generate digital promo code.
+    fresh_bounty = await RideBounty.get(bounty.id)
+    if fresh_bounty and fresh_bounty.status == "OPEN":
+        promo = await generate_ride_promo(fresh_bounty.hospital)
+        fresh_bounty.status = "PROMO_GENERATED"
+        fresh_bounty.promo_code = promo["promo_code"]
+        await fresh_bounty.save()
+        
+        # Send the code to the donor
+        bounty_donor = await Account.get(bounty.donor_id)
+        if bounty_donor and bounty_donor.fcm_token:
+            await send_push(bounty_donor.fcm_token, {
+                "title": "Thank you! Here is a ride home.",
+                "body": f"No community drivers are nearby, but we've got you covered. Use code {fresh_bounty.promo_code} on {promo['partner']} for a free ride home.",
+                "type": "PROMO_ISSUED"
+            })
+        log.info("Ride Bounty %s timed out. Issued promo %s.", bounty.id, fresh_bounty.promo_code)
