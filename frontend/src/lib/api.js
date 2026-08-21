@@ -376,3 +376,8 @@ export const cbcApi = {
   listSessions: () =>
     request('/cbc/sessions', { auth: 'user' }),
 }
+
+export const bountyApi = {
+    list: () => request('/bounties', { auth: 'user' }),
+    accept: (id) => request(/bounties//accept, { method: 'POST', auth: 'user' })
+}
