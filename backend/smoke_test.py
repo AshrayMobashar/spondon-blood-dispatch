@@ -531,6 +531,168 @@ async def main() -> int:
         check("Moderation propagates to the account's open requests",
               r.json()["requests_affected"] >= 1, str(r.json()))
 
+        # ── Module 3 ────────────────────────────────────────────────
+        section("M3F1 — Live En-Route Tracker (+ dropped-connection corner case)")
+
+        # A self-contained emergency: one family, one donor, one locked request.
+        fam = await register(c, phone_for(stamp, 2), name="Tracker Family",
+                             role="patient", blood_type="B+")
+        fam_h = {"Authorization": f"Bearer {fam['access_token']}"}
+        trk = await register(c, phone_for(stamp, 3), name="Tracker Donor", role="donor",
+                             blood_type="B+", health={"weight_kg": 70})
+        trk_id, trk_h = trk["account"]["id"], {"Authorization": f"Bearer {trk['access_token']}"}
+
+        HOSP = (23.7261, 90.3969)          # Dhaka Medical College
+        treq = (await c.post("/api/requests", json={
+            "patient_name": "Tracked Patient", "hospital": "Dhaka Medical College",
+            "blood_type": "B+", "severity": "CRITICAL",
+            "hospital_lat": HOSP[0], "hospital_lng": HOSP[1],
+        }, headers=fam_h)).json()
+        await c.post(f"/api/admin/requests/{treq['id']}/slip",
+                     json={"action": "VERIFY"}, headers=ah)
+
+        acc = (await c.post(f"/api/requests/{treq['id']}/accept",
+                            json={"donor_id": trk_id})).json()
+        check("Accepting a request opens the trip and the call channel in one step",
+              acc.get("trip") is not None and acc.get("call_session_id"),
+              str(acc)[:300])
+
+        # Privacy boundary: a request id is not a licence to watch someone travel.
+        outsider = await register(c, phone_for(stamp, 1), name="Nosy Stranger",
+                                  role="donor", blood_type="A-", health={"weight_kg": 60})
+        r = await c.get(f"/api/requests/{treq['id']}/trip",
+                        headers={"Authorization": f"Bearer {outsider['access_token']}"})
+        check("A non-participant cannot read the tracker (403)", r.status_code == 403,
+              f"got {r.status_code}")
+
+        # Two fixes, 800 m apart, closing on the hospital.
+        far = {"lat": 23.7500, "lng": 90.4100,
+               "recorded_at": iso(now - timedelta(seconds=30))}
+        near = {"lat": 23.7400, "lng": 90.4050, "recorded_at": iso(now - timedelta(seconds=15))}
+        await c.post(f"/api/requests/{treq['id']}/trip/location", json=far, headers=trk_h)
+        r2 = (await c.post(f"/api/requests/{treq['id']}/trip/location",
+                           json=near, headers=trk_h)).json()
+        check("A position report produces a distance and an ETA",
+              r2["trip"]["distance_km"] is not None and r2["trip"]["eta_minutes"] is not None,
+              str(r2["trip"])[:250])
+        check("A live tracker reports a fresh signal and a countdown target",
+              r2["trip"]["signal"] == "LIVE" and r2["trip"]["eta_at"] is not None,
+              str(r2["trip"])[:250])
+
+        # Out-of-order replay must not rewind the trail.
+        stale_fix = {"lat": 23.7600, "lng": 90.4200,
+                     "recorded_at": iso(now - timedelta(seconds=45))}
+        r3 = (await c.post(f"/api/requests/{treq['id']}/trip/location",
+                           json=stale_fix, headers=trk_h)).json()
+        check("CC: a fix older than the last one is rejected, not applied backwards",
+              r3["accepted"] is False, str(r3)[:200])
+
+        # A GPS jump no car could make.
+        teleport = {"lat": 24.9000, "lng": 91.8000, "recorded_at": iso(now)}
+        r4 = (await c.post(f"/api/requests/{treq['id']}/trip/location",
+                           json=teleport, headers=trk_h)).json()
+        check("CC: an implausible jump is rejected rather than teleporting the icon",
+              r4["accepted"] is False, str(r4)[:200])
+
+        # The corner case itself. A fix whose *server* receipt is old cannot be
+        # faked from here, so the freeze is asserted through the sweep's own
+        # threshold: shorten it via .env for a fast run, otherwise confirm the
+        # honest live state and that the machinery is wired.
+        live = (await c.get(f"/api/requests/{treq['id']}/trip", headers=fam_h)).json()
+        check("Family sees the tracker with a stale-data flag present at all times",
+              "stale" in live["trip"] and "seconds_since_fix" in live["trip"],
+              str(live["trip"])[:250])
+        check("A live trip is not flagged stale",
+              live["trip"]["stale"] is False, str(live["trip"])[:200])
+
+        cfg = (await c.get("/api/config")).json()
+        stale_after = cfg["dispatch"].get("stale_after_seconds") or \
+            cfg.get("tracking", {}).get("stale_after_seconds")
+        if stale_after and stale_after <= 10:
+            # Fast-demo configuration: wait it out and assert the real freeze.
+            await asyncio.sleep(stale_after + 6)
+            frozen = (await c.get(f"/api/requests/{treq['id']}/trip", headers=fam_h)).json()
+            check("CC: signal loss freezes the tracker and flags the ETA",
+                  frozen["trip"]["stale"] is True
+                  and frozen["trip"]["signal"] == "SIGNAL_LOST",
+                  str(frozen["trip"])[:250])
+            check("CC: the frozen ETA withholds its countdown target",
+                  frozen["trip"]["eta_at"] is None, str(frozen["trip"])[:250])
+            check("CC: and states the reason verbatim",
+                  frozen["trip"]["message"] ==
+                  "Donor signal lost, relying on last known location",
+                  str(frozen["trip"].get("message")))
+        else:
+            print(f"  SKIP  timed freeze assertions "
+                  f"(TRIP_STALE_AFTER_SECONDS={stale_after}s — set it to <=10 to assert)")
+
+        # Buffered fixes flushed after a reconnect, deliberately out of order.
+        batch = {"points": [
+            {"lat": 23.7300, "lng": 90.4000, "recorded_at": iso(now + timedelta(seconds=40))},
+            {"lat": 23.7350, "lng": 90.4020, "recorded_at": iso(now + timedelta(seconds=20))},
+        ]}
+        rb = (await c.post(f"/api/requests/{treq['id']}/trip/batch",
+                           json=batch, headers=trk_h)).json()
+        check("CC: fixes buffered through a dead uplink are replayed in recorded order",
+              rb["accepted"] == 2, str(rb)[:250])
+
+        section("M3F2 — Direct-Connect Masked Calling (+ VOIP failure corner case)")
+
+        call = (await c.post(f"/api/requests/{treq['id']}/call", headers=fam_h)).json()
+        check("A call channel opens once a donor has accepted",
+              call["status"] == "ACTIVE" and call["mode"] == "VOIP", str(call)[:250])
+        check("The channel exposes no real phone number, only a masked hint",
+              call.get("dial_number") is None
+              and (call.get("peer_masked") or "").count("•") >= 5,
+              str(call)[:250])
+
+        again = (await c.post(f"/api/requests/{treq['id']}/call", headers=fam_h)).json()
+        check("Re-opening returns the same session rather than a second one",
+              again["session_id"] == call["session_id"],
+              f"{call['session_id']} vs {again['session_id']}")
+
+        r = await c.post(f"/api/requests/{treq['id']}/call",
+                         headers={"Authorization": f"Bearer {outsider['access_token']}"})
+        check("A non-participant cannot open the call channel (403)",
+              r.status_code == 403, f"got {r.status_code}")
+
+        fb = (await c.post(f"/api/calls/{call['session_id']}/fallback",
+                           json={"reason": "POOR_NETWORK", "mos": 1.7,
+                                 "packet_loss_pct": 24.0, "rtt_ms": 900},
+                           headers=fam_h)).json()
+        check("CC: a failing VOIP leg falls back to a temporary GSM number",
+              fb["mode"] == "GSM_FALLBACK" and bool(fb["dial_number"]), str(fb)[:250])
+        check("CC: the fallback keeps the same session — one call, new transport",
+              fb["session_id"] == call["session_id"], str(fb)[:200])
+        # The point of the whole feature: the number that comes back must not be
+        # either participant's. Checked against the actual digits they registered.
+        donor_digits = phone_for(stamp, 3)[1:]     # drop the leading 0 for +880 form
+        family_digits = phone_for(stamp, 2)[1:]
+        check("CC: the number handed out is the platform's, not a participant's",
+              donor_digits not in fb["dial_number"]
+              and family_digits not in fb["dial_number"],
+              str(fb["dial_number"]))
+
+        # Both clients detect the same bad network and both call fallback.
+        dup = (await c.post(f"/api/calls/{call['session_id']}/fallback",
+                            json={"reason": "POOR_NETWORK", "mos": 1.5},
+                            headers=trk_h)).json()
+        check("CC: a second fallback reuses the number instead of draining the pool",
+              dup.get("reused") is True and dup["dial_number"] == fb["dial_number"],
+              str(dup)[:200])
+
+        before = (await c.get("/api/calls/pool")).json()
+        await c.post(f"/api/calls/{call['session_id']}/end",
+                     json={"reason": "COMPLETED"}, headers=fam_h)
+        after = (await c.get("/api/calls/pool")).json()
+        check("Hanging up returns the borrowed number to the pool",
+              after["free"] == before["free"] + 1,
+              f"free {before['free']} → {after['free']}")
+
+        gone = (await c.get(f"/api/requests/{treq['id']}/call", headers=fam_h)).json()
+        check("A closed channel stops resolving",
+              gone.get("session_id") is None, str(gone)[:200])
+
     section("SUMMARY")
     print(f"  {len(PASSED)} passed, {len(FAILED)} failed")
     for label, detail in FAILED:

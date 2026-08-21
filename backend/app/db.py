@@ -10,6 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from .models import (
     Account, BloodRequest, PingLog, Appeal, Admin,
     OtpChallenge, MedicalCertificate, Escalation, University,
+    CallSession, ProxyNumber,
 )
 
 load_dotenv()
@@ -44,6 +45,7 @@ async def init_db() -> None:
         document_models=[
             Account, BloodRequest, PingLog, Appeal, Admin,
             OtpChallenge, MedicalCertificate, Escalation, University,
+            CallSession, ProxyNumber,
         ],
     )
     ready = True

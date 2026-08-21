@@ -96,7 +96,9 @@ async def patch_request(request_id: str, body: RequestPatch, admin: Admin = Depe
     req = await BloodRequest.get(to_oid(request_id))
     if not req:
         raise HTTPException(status_code=404, detail="Blood request not found")
-        
+
+    # Reopening a request must release the donor who held it, or the lock fields
+    # keep naming someone who is no longer coming.
     if body.status == "OPEN" and req.status in ("LOCKED", "FULFILLED", "NO_SHOW"):
         req.secured_donor_id = None
         req.secured_donor_name = None

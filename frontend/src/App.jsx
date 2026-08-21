@@ -2,7 +2,6 @@ import { Routes, Route, Link } from 'react-router-dom'
 import Ashray0 from './pages/Ashray0.jsx'
 import Ashray1 from './pages/Ashray1.jsx'
 import Ashray2 from './pages/Ashray2.jsx'
-import Ashray3 from './pages/Ashray3.jsx'
 import Login from './pages/auth/Login.jsx'
 import Register from './pages/auth/Register.jsx'
 import PatientSignup from './pages/auth/PatientSignup.jsx'
@@ -10,10 +9,13 @@ import DonorSignup from './pages/auth/DonorSignup.jsx'
 import EligibilityEngine from './pages/donor/EligibilityEngine.jsx'
 import UpdateRecords from './pages/donor/UpdateRecords.jsx'
 import WeightValidation from './pages/donor/WeightValidation.jsx'
-import DonorProfile from './pages/donor/DonorProfile.jsx'
-import IncomingRequests from './pages/donor/IncomingRequests.jsx'
 import DoctorSlipOcr from './pages/patient/DoctorSlipOcr.jsx'
 import VarsityLeaderboard from './pages/leaderboard/VarsityLeaderboard.jsx'
+import LiveTracker from './pages/patient/LiveTracker.jsx'
+import EnRoute from './pages/donor/EnRoute.jsx'
+import DonorProfile from './pages/donor/DonorProfile.jsx'
+import IncomingRequests from './pages/donor/IncomingRequests.jsx'
+import Ashray3 from './pages/Ashray3.jsx'
 import GeoRipple from './pages/admin/GeoRipple.jsx'
 import PingLog from './pages/admin/PingLog.jsx'
 import RareBlood from './pages/admin/RareBlood.jsx'
@@ -37,6 +39,10 @@ function App() {
 
       {/* Patient / Family */}
       <Route path="/patient/ocr" element={<DoctorSlipOcr />} />
+      {/* Both accept the request id in the path or as ?request=… — a family
+          following a push notification has one, a family arriving cold does not. */}
+      <Route path="/patient/track" element={<LiveTracker />} />
+      <Route path="/patient/track/:requestId" element={<LiveTracker />} />
 
       {/* Donor */}
       <Route path="/donor/sleep" element={<Ashray1 />} />
@@ -45,6 +51,8 @@ function App() {
       <Route path="/donor/weight" element={<WeightValidation />} />
       <Route path="/donor/profile" element={<DonorProfile />} />
       <Route path="/donor/requests" element={<IncomingRequests />} />
+      <Route path="/donor/en-route" element={<EnRoute />} />
+      <Route path="/donor/en-route/:requestId" element={<EnRoute />} />
 
       {/* Admin console (real backend + JWT) */}
       <Route path="/admin" element={<AdminConsole />} />

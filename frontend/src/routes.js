@@ -13,6 +13,8 @@ import {
   Droplet,
   Siren,
   Trophy,
+  Navigation,
+  PhoneCall,
 } from 'lucide-react'
 
 /** Single source of truth for navigation. Route elements live in App.jsx. */
@@ -34,6 +36,7 @@ export const routeGroups = [
     items: [
       { to: '/register/patient', label: 'Patient Sign-up', icon: UserPlus },
       { to: '/patient/ocr', label: "Doctor's Slip OCR", icon: FileText },
+      { to: '/patient/track', label: 'Live En-Route Tracker', icon: Navigation },
     ],
   },
   {
@@ -45,6 +48,7 @@ export const routeGroups = [
       { to: '/donor/eligibility', label: 'Eligibility Cooldown', icon: ShieldCheck },
       { to: '/donor/records', label: 'Update Records', icon: ClipboardEdit },
       { to: '/donor/weight', label: 'Weight Validation', icon: Scale },
+      { to: '/donor/en-route', label: 'En-Route Sharing', icon: PhoneCall },
     ],
   },
   {

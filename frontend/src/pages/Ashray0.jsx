@@ -145,12 +145,6 @@ export default function Ashray0() {
                 <img src={emergencyBolt} alt="" className="size-3.5" />
                 Emergency Request
               </Link>
-              <Link
-                to="/ashray3"
-                className="inline-flex items-center gap-2 rounded-full border border-donor/40 bg-donor/10 px-6 py-3 text-sm font-semibold text-donor transition-colors hover:bg-donor/20"
-              >
-                Try Patient-Donor Demo
-              </Link>
             </div>
           </section>
 

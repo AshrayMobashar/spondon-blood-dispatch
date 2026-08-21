@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  ShieldCheck, FileUp, CheckCircle2, Droplet, Loader2, TriangleAlert,
+  ShieldCheck, FileUp, UserCog, CheckCircle2, Droplet, Loader2, TriangleAlert,
 } from 'lucide-react'
 import Shell from '../../components/Shell.jsx'
 import { DonorChips } from '../../components/RoleChips.jsx'
@@ -171,11 +171,8 @@ export default function EligibilityEngine() {
 
           <CertificateUpload donorId={account?.id} onDone={load} />
 
-          <Button variant="primary" className="w-full" onClick={() => navigate('/donor/requests')}>
-            Requests
-          </Button>
-          <Button variant="outline" className="w-full mt-3 border-donor/30 text-donor hover:bg-donor/10 hover:text-donor" onClick={() => navigate('/donor/profile')}>
-            My Profile
+          <Button variant="ghost" className="w-full" onClick={() => navigate('/admin/concurrency')}>
+            <UserCog className="size-4" /> Admin Review Panel
           </Button>
         </aside>
 

@@ -155,18 +155,6 @@ export default function Ashray2() {
     }
   }
 
-  const handleDecline = async (donor) => {
-    if (!request) return
-    logTx(`${donor.donor_name} — Decline packet received`, 'warning', 'text-warning')
-    try {
-      await requestApi.decline(request.id, donor.donor_id)
-      logTx(`Donor ${donor.donor_name} declined the request`, 'primary', 'text-text-muted')
-      setDonors(prev => prev.map(d => d.donor_id === donor.donor_id ? { ...d, declined: true } : d))
-    } catch (err) {
-      logTx(`Error: ${err.message}`, 'warning', 'text-warning')
-    }
-  }
-
   const handleRaceCondition = async () => {
     if (!request || donors.length < 2) return
     logTx(`Simulating simultaneous accepts from ${donors[0].donor_name} & ${donors[1].donor_name}`, 'warning', 'text-warning')
@@ -406,30 +394,14 @@ export default function Ashray2() {
                             <span className="text-text-faint">{d.distance_km} km</span>
                           </p>
                         </div>
-                        <div className="flex gap-2">
-                          {d.declined ? (
-                            <span className="text-[10px] font-bold text-text-muted px-2 py-1.5">DECLINED</span>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                disabled={request?.status !== 'OPEN'}
-                                onClick={() => handleDecline(d)}
-                                className="rounded-md bg-white/10 px-3.5 py-1.5 text-[10px] font-semibold text-white transition-colors hover:bg-white/20 disabled:opacity-50"
-                              >
-                                Decline
-                              </button>
-                              <button
-                                type="button"
-                                disabled={request?.status !== 'OPEN'}
-                                onClick={() => handleAccept(d)}
-                                className="rounded-md bg-success px-3.5 py-1.5 text-[10px] font-semibold text-white transition-colors hover:brightness-110 disabled:opacity-50"
-                              >
-                                Accept
-                              </button>
-                            </>
-                          )}
-                        </div>
+                        <button
+                          type="button"
+                          disabled={request?.status !== 'OPEN'}
+                          onClick={() => handleAccept(d)}
+                          className="rounded-md bg-success px-3.5 py-1.5 text-[10px] font-semibold text-white transition-colors hover:brightness-110 disabled:opacity-50"
+                        >
+                          Accept
+                        </button>
                       </div>
                     ))}
                   </div>

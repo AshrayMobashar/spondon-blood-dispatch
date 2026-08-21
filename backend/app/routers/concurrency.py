@@ -19,14 +19,21 @@ from .. import config, integrations
 from ..db import get_collection
 from ..dispatch import is_dispatchable, run_dispatch
 from ..eligibility import recalculate
-from ..models import Account, BloodRequest, Appeal, GeoPoint, SHADOW_BANNED, PingLog
+from ..models import (
+    Account, BloodRequest, Appeal, GeoPoint, PingLog, SHADOW_BANNED,
+    TRIP_ARRIVED, TRIP_CANCELLED,
+)
 from ..schemas import (
-    RequestCreate, AcceptBody, DeclineBody, ArrivalBody, AppealCreate, AppealResolve, SlipUpload,
+    RequestCreate, AcceptBody, DeclineBody, ArrivalBody, AppealCreate, AppealResolve,
+    SlipUpload,
 )
 from ..realtime import feed
 from ..security import get_optional_account, get_current_account
 from ..services import to_oid, serialize, utcnow
+from ..tracking import public_trip
 from ..zones import zone_of
+from .calling import close_sessions_for_request, open_session
+from .tracking import start_trip
 
 router = APIRouter()
 
@@ -217,11 +224,17 @@ async def list_requests():
 
 @router.get("/requests/incoming", summary="Active requests dispatched to the current donor")
 async def get_incoming_requests(donor: Account = Depends(get_current_account)):
+    """The donor's own feed: requests they were actually pinged for and have not
+    already turned down.
+
+    Declared above `/requests/{request_id}` because FastAPI matches in
+    declaration order — the other way round, "incoming" is read as a request id.
+    """
     pings = await PingLog.find(
         PingLog.donor_id == str(donor.id),
-        PingLog.pinged == True
+        PingLog.pinged == True  # noqa: E712
     ).to_list()
-    
+
     request_ids = [to_oid(p.request_id) for p in pings]
     if not request_ids:
         return []
@@ -229,7 +242,7 @@ async def get_incoming_requests(donor: Account = Depends(get_current_account)):
     reqs = await BloodRequest.find(
         {"_id": {"$in": request_ids}, "status": "OPEN"}
     ).sort(-BloodRequest.created_at).to_list()
-    
+
     # Exclude requests the donor has already declined
     reqs = [r for r in reqs if str(donor.id) not in r.declined_by]
 
@@ -246,14 +259,13 @@ async def get_request(request_id: str):
 
 # ── The concurrency lock (atomic first-wins) ─────────────────────────
 @router.post("/requests/{request_id}/accept", summary="Accept a request (atomic lock)")
-async def accept_request(request_id: str, body: AcceptBody, logged_in: Optional[Account] = Depends(get_optional_account)):
+async def accept_request(request_id: str, body: AcceptBody):
     """ACID guarantee: a single conditional `find_one_and_update` flips the
     request OPEN → LOCKED. MongoDB serialises document writes, so out of any
     number of simultaneous accepts exactly ONE succeeds; every runner-up sees
     the document already LOCKED and gets a polite 409 'Donor Secured'."""
     oid = to_oid(request_id)
-    donor_id = str(logged_in.id) if logged_in else body.donor_id
-    donor = await _get_donor(donor_id)
+    donor = await _get_donor(body.donor_id)
     req = await _get_request(request_id)
 
     # A donor who was never pingable must not be able to lock a request by
@@ -318,6 +330,15 @@ async def accept_request(request_id: str, body: AcceptBody, logged_in: Optional[
         request_id=request_id,
     )
 
+    # Winning the lock is what unlocks the two live channels the family gets:
+    # the en-route tracker and the masked call button. Both are provisioned here
+    # rather than on first use, so the family's screen flips from "searching" to
+    # a working dashboard in one step — a family told help is coming should not
+    # then wait on a second round-trip to find out where it is or how to reach it.
+    secured = await BloodRequest.get(oid)
+    trip = await start_trip(secured)
+    session = await open_session(secured)
+
     return {
         "message": "You've secured this request",
         "request_id": str(updated["_id"]),
@@ -327,6 +348,12 @@ async def accept_request(request_id: str, body: AcceptBody, logged_in: Optional[
         "secured_at": updated["secured_at"].isoformat(),
         "varsity_node": updated.get("secured_donor_university"),
         "response_seconds": updated.get("response_seconds"),
+        "trip": public_trip(trip),
+        "call_session_id": str(session.id) if session else None,
+        "next_step": (
+            "Start sharing your location so the family can track you, and use the "
+            "masked call button to agree where to meet."
+        ),
     }
 
 
@@ -349,7 +376,7 @@ async def decline_request(request_id: str, body: DeclineBody, logged_in: Optiona
     return {
         "message": "You have declined this request",
         "request_id": str(oid),
-        "donor_id": str(donor.id)
+        "donor_id": str(donor.id),
     }
 
 
@@ -371,7 +398,15 @@ async def record_arrival(request_id: str, body: ArrivalBody):
         # that scores, never the acceptance — otherwise a campus could climb the
         # board by tapping Accept fastest and never turning up.
         req.fulfilled_at = now
+        # The journey is over, so the two live channels close with it. A tracker
+        # left running keeps publishing a donor's position after the reason for
+        # sharing it has passed, and a call channel left open is a standing
+        # phone line between two people who met once.
+        if req.trip:
+            req.trip.status = TRIP_ARRIVED
+            req.trip.arrived_at = req.trip.arrived_at or now
         await req.save()
+        await close_sessions_for_request(str(req.id), "REQUEST_FULFILLED")
 
         # A fulfilled request *is* a donation, so it arms the cooldown here —
         # platelets for 14 days, anything else for 120.
@@ -403,7 +438,10 @@ async def record_arrival(request_id: str, body: ArrivalBody):
     # No-show → record it and apply the 2-in-a-year rule.
     now = utcnow()
     req.status = "NO_SHOW"
+    if req.trip:
+        req.trip.status = TRIP_CANCELLED
     await req.save()
+    await close_sessions_for_request(str(req.id), "REQUEST_NO_SHOW")
 
     donor.reliability.no_show_count += 1
     donor.reliability.no_show_dates.append(now)
