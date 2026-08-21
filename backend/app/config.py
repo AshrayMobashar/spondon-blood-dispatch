@@ -136,6 +136,33 @@ TRIP_IMPLAUSIBLE_SPEED_KMH = _float("TRIP_IMPLAUSIBLE_SPEED_KMH", 160.0)
 # grid is not a straight line to anywhere.
 TRIP_ROAD_FACTOR = _float("TRIP_ROAD_FACTOR", 1.35)
 
+# ── Golden Donor Verification (Module 3, Feature 3) ──────────────────
+# Three confirmed donations earn the badge. It is a *proven* count — only an
+# arrival the hospital confirmed increments it, so the badge cannot be farmed
+# by accepting requests and never turning up.
+GOLDEN_DONOR_MIN_DONATIONS = _int("GOLDEN_DONOR_MIN_DONATIONS", 3)
+# Six months of silence and the priority is suspended. The badge itself is
+# never taken away — it was earned — but a donor the app has not seen since
+# February must not be first in the queue for an ICU case tonight, because the
+# seconds spent ringing a phone nobody opens are seconds the patient pays for.
+GOLDEN_DORMANT_AFTER_DAYS = _int("GOLDEN_DORMANT_AFTER_DAYS", 180)
+# The city the priority pool serves. A donor who has moved away is not less
+# proven — they are simply not reachable in time for a Dhaka ICU.
+GOLDEN_HOME_CITY = os.getenv("GOLDEN_HOME_CITY", "Dhaka")
+# Centre of Dhaka and the radius that still counts as "in the city". Wide
+# enough to include Savar and Keraniganj, which are commutable; narrow enough
+# that Chattogram is plainly outside.
+GOLDEN_CITY_LAT = _float("GOLDEN_CITY_LAT", 23.7806)
+GOLDEN_CITY_LNG = _float("GOLDEN_CITY_LNG", 90.4074)
+GOLDEN_CITY_RADIUS_KM = _float("GOLDEN_CITY_RADIUS_KM", 40.0)
+# Which requests actually trigger the priority ordering. Severity alone is the
+# fallback; a request explicitly flagged `icu` counts regardless of severity.
+GOLDEN_PRIORITY_SEVERITIES = {
+    s.strip().upper()
+    for s in os.getenv("GOLDEN_PRIORITY_SEVERITIES", "LIFE_THREATENING").split(",")
+    if s.strip()
+}
+
 # ── Direct-Connect Masked Calling (Module 3, Feature 2) ──────────────
 # A call channel outlives neither the emergency nor the day. It is torn down on
 # arrival; this is the backstop for a request nobody ever closes.
@@ -271,6 +298,13 @@ def public_config() -> dict:
             "rare_blood_types": sorted(RARE_BLOOD_TYPES),
             "rare_escalation_seconds": RARE_ESCALATION_SECONDS,
             "rare_sms_alerts": RARE_SMS_ALERTS,
+        },
+        "golden_donor": {
+            "min_donations": GOLDEN_DONOR_MIN_DONATIONS,
+            "dormant_after_days": GOLDEN_DORMANT_AFTER_DAYS,
+            "home_city": GOLDEN_HOME_CITY,
+            "city_radius_km": GOLDEN_CITY_RADIUS_KM,
+            "priority_severities": sorted(GOLDEN_PRIORITY_SEVERITIES),
         },
         "tracking": {
             "ping_interval_seconds": TRIP_PING_INTERVAL_SECONDS,

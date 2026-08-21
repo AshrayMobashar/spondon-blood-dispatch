@@ -10,6 +10,7 @@ Collections, by the feature that owns them:
   Module 2.3 - BloodRequest slip_* fields (doctor's-slip OCR)
   Module 3.1 - University, Account.university, BloodRequest.secured_donor_university
                / response_seconds / fulfilled_at (Varsity Node Leaderboard)
+  Module 3.3 - Account.golden, BloodRequest.icu (Golden Donor Verification)
   Admin      - Admin, Account.status (ban / shadow ban)
 """
 from datetime import datetime, timezone
@@ -135,6 +136,50 @@ class Reliability(BaseModel):
     removed_at: Optional[datetime] = None
 
 
+# Golden Donor lifecycle (Module 3, Feature 3).
+GOLDEN_NOT_EARNED = "NOT_EARNED"   # fewer than the required confirmed donations
+GOLDEN_ACTIVE = "ACTIVE"           # badge earned and priority currently applied
+GOLDEN_SUSPENDED = "SUSPENDED"     # badge kept, priority temporarily withdrawn
+
+
+class GoldenStatus(BaseModel):
+    """The Golden Donor badge and whether its priority is currently in force.
+
+    Two separate ideas, deliberately kept in two fields:
+
+      * `is_golden` — the badge. Earned at three confirmed donations and never
+        taken away. It is a record of what someone did, and moving house does
+        not undo three donations.
+      * `priority_active` — the dispatch privilege. Suspended the moment the
+        donor looks like a ghost (out of the city, or six months without
+        opening the app) and restored the moment they do not.
+
+    Collapsing the two into one flag would mean a returning donor had to earn
+    their badge again from scratch, and a family would see a proven donor's
+    history erased because they spent a semester abroad.
+    """
+    is_golden: bool = False
+    status: str = GOLDEN_NOT_EARNED        # NOT_EARNED | ACTIVE | SUSPENDED
+    priority_active: bool = False
+    donations_at_award: int = 0
+    earned_at: Optional[datetime] = None
+    # Why the priority is off right now. Empty whenever it is on.
+    suspended_reasons: List[str] = []
+    suspended_at: Optional[datetime] = None
+    restored_at: Optional[datetime] = None
+    suspensions: int = 0                   # lifetime count, for the donor's own history
+    # Last time the donor was seen *using* the app — a login or an explicit
+    # heartbeat from a screen they opened. Separate from `Account.last_login_at`
+    # because a donor who stays signed in for a year still opens the app, and
+    # judging them by their last login alone would suspend an active donor.
+    last_active_at: Optional[datetime] = None
+    # Self-declared city. Set when a donor tells us they have relocated; the
+    # GPS check below is the fallback for one who has not.
+    home_city: Optional[str] = None
+    last_known_city_km: Optional[float] = None   # km from the served city centre
+    recalculated_at: Optional[datetime] = None
+
+
 class HealthProfile(BaseModel):
     """Captured at donor sign-up and editable afterwards.
 
@@ -206,6 +251,10 @@ class Account(Document):
     current_location: Optional[GeoPoint] = None
     # ── Module 2.2 — accountability ──
     reliability: Reliability = Field(default_factory=Reliability)
+    # ── Module 3.3 — Golden Donor Verification ──
+    # Derived state, never hand-edited: app.golden.recalculate() is the only
+    # writer, exactly as app.eligibility owns the eligibility flag.
+    golden: GoldenStatus = Field(default_factory=GoldenStatus)
     # ── Account moderation (admin-controlled) ──
     status: str = ACTIVE                  # ACTIVE | BANNED | SHADOW_BANNED
     status_reason: Optional[str] = None
@@ -234,6 +283,11 @@ class BloodRequest(Document):
     component: str = "WHOLE_BLOOD"       # WHOLE_BLOOD | PLATELETS | PLASMA
     units: int = 1
     severity: str = "NORMAL"             # NORMAL | CRITICAL | LIFE_THREATENING
+    # Set by the requesting hospital when the patient is in intensive care.
+    # Severity alone cannot express this: a LIFE_THREATENING road accident in
+    # A&E and a bleeding ICU patient are both urgent, and only the second is
+    # the case Golden Donor priority exists for.
+    icu: bool = False
     road_segment: Optional[str] = None   # road segment the request sits on
     hospital_location: Optional[GeoPoint] = None   # drives the expanding ripple
     status: str = "OPEN"                 # OPEN | LOCKED | FULFILLED | NO_SHOW

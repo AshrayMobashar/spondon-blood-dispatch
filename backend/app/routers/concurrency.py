@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pymongo import ReturnDocument
 
 from .. import config, integrations
+from .. import golden as golden_engine
 from ..db import get_collection
 from ..dispatch import is_dispatchable, run_dispatch
 from ..eligibility import recalculate
@@ -81,6 +82,7 @@ async def create_request(
         component=body.component.upper(),
         units=body.units,
         severity=body.severity.upper(),
+        icu=body.icu,
         road_segment=body.road_segment,
         hospital_location=location,
         requester_id=str(requester.id) if requester else None,
@@ -417,6 +419,11 @@ async def record_arrival(request_id: str, body: ArrivalBody):
         donor.eligibility.cooldown_waived_at = None
         donor.eligibility.cooldown_waived_by = None
         recalculate(donor, now=now)
+        # The Golden Donor badge is minted here and nowhere else. Turning up is
+        # the whole qualification, so the count that earns it can only move on
+        # a confirmed arrival — never on an acceptance.
+        was_golden = donor.golden.is_golden
+        golden_engine.recalculate(donor, now=now)
         await donor.save()
 
         return {
@@ -424,6 +431,8 @@ async def record_arrival(request_id: str, body: ArrivalBody):
             "donor_id": str(donor.id),
             "status": "FULFILLED",
             "donation_type": kind,
+            "golden_donor": golden_engine.badge(donor),
+            "golden_donor_awarded": donor.golden.is_golden and not was_golden,
             "cooldown_days": config.COOLDOWN_DAYS[kind],
             "next_eligible_at": (
                 donor.eligibility.cooldown_until.isoformat()

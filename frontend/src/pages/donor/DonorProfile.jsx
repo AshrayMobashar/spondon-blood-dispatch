@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { User, Phone, MapPin, Droplet, ArrowLeft, Save, Loader2 } from 'lucide-react'
 import Shell from '../../components/Shell.jsx'
 import { Card, Button, Input } from '../../components/ui.jsx'
-import { authApi } from '../../lib/api.js'
+import { GoldenBadge } from '../../components/GoldenBadge.jsx'
+import { authApi, goldenApi } from '../../lib/api.js'
 
 export default function DonorProfile() {
   const navigate = useNavigate()
@@ -13,6 +14,7 @@ export default function DonorProfile() {
   
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
+  const [golden, setGolden] = useState(null)
   
   useEffect(() => {
     authApi.me()
@@ -26,6 +28,13 @@ export default function DonorProfile() {
         if (err.status === 401) navigate('/login')
         setLoading(false)
       })
+
+    // The badge is decoration here — the profile must still render for a
+    // patient account, or when the golden endpoint is unavailable.
+    goldenApi
+      .me()
+      .then((res) => setGolden(res.badge))
+      .catch(() => setGolden(null))
   }, [navigate])
 
   const save = async (e) => {
@@ -76,9 +85,17 @@ export default function DonorProfile() {
             <User className="size-10" />
           </div>
           <h2 className="text-2xl font-bold text-white">{data?.name}</h2>
-          <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-donor/20 px-3 py-1 text-xs font-semibold text-donor">
-            <Droplet className="size-3.5 fill-donor" /> {data?.blood_type}
-          </span>
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-donor/20 px-3 py-1 text-xs font-semibold text-donor">
+              <Droplet className="size-3.5 fill-donor" /> {data?.blood_type}
+            </span>
+            {/* Verified Golden Donor badge — the profile is where the spec puts it. */}
+            {golden?.is_golden && (
+              <Link to="/donor/golden">
+                <GoldenBadge badge={golden} />
+              </Link>
+            )}
+          </div>
         </div>
 
         {/* Edit Form */}

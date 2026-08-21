@@ -8,8 +8,13 @@ Ordering matters here, so it is explicit:
                    (role, blood type, moderation status, eligibility flag)
   3.  Reach      — which of those are close enough right now?
                    (rare-blood city-wide override, else the expanding ripple)
-  4.  Preference — for each reachable donor, ping or skip?
+  4.  Order      — in what sequence are the reachable donors pinged?
+                   (Golden Donor priority on ICU cases — see app.golden)
+  5.  Preference — for each reachable donor, ping or skip?
                    (Sleep Mode, commute route — see services.decide_ping)
+
+Stage 4 reorders and never filters. A donor without a badge is pinged for an
+ICU case exactly as they always were; the badge only decides who hears first.
 
 Gate 1 is the shadow ban's teeth: a muted request walks the whole pipeline and
 returns a normal-looking result to its owner, but produces zero pings.
@@ -21,6 +26,11 @@ from typing import Optional
 
 from . import config, db, integrations
 from .eligibility import recalculate, snapshot
+from .golden import (
+    TIER_LABELS, is_icu_critical, order_candidates, priority_reason, priority_tier,
+)
+from .golden import recalculate as recalculate_golden
+from .golden import snapshot as golden_snapshot
 from .models import (
     Account, BloodRequest, Escalation, PingLog, ACTIVE, ROLE_DONOR, utcnow,
 )
@@ -148,6 +158,7 @@ def evaluate_donor(
     now = now or utcnow()
     now_hhmm = now_hhmm or local_hhmm(now)
     recalculate(donor, now=now)             # in-memory only; caller decides to save
+    recalculate_golden(donor, now=now)
 
     mode = triage(req)
     rare = mode == CITYWIDE_RARE
@@ -161,6 +172,10 @@ def evaluate_donor(
         "dispatch_mode": mode,
         "rare_blood_override": rare,
         "radius_km": radius,
+        "icu_priority": is_icu_critical(req),
+        "priority_tier": TIER_LABELS[priority_tier(donor, req)],
+        "golden_donor": donor.golden.is_golden,
+        "golden_priority_active": donor.golden.priority_active,
         "would_ping": False,
     }
 
@@ -230,6 +245,8 @@ async def run_dispatch(
         "dispatch_mode": mode,
         "rare_blood_override": rare,
         "radius_km": radius,
+        "icu_priority": is_icu_critical(req),
+        "icu_priority_reason": priority_reason(req),
     }
 
     if blocked:
@@ -248,9 +265,14 @@ async def run_dispatch(
     for acc in accounts:
         # The flag is recomputed here as well as on login: a cooldown that
         # expired an hour ago must not keep a willing donor out of the pool.
-        before = snapshot(acc)
+        before, before_golden = snapshot(acc), golden_snapshot(acc)
         recalculate(acc, now=now)
-        if snapshot(acc) != before:
+        # The badge is recomputed on the same pass for the same reason the
+        # eligibility flag is: a Golden Donor who crossed the six-month line
+        # last night must not be given priority tonight because nothing
+        # happened to trigger a refresh.
+        recalculate_golden(acc, now=now)
+        if snapshot(acc) != before or golden_snapshot(acc) != before_golden:
             await acc.save()
         ok, why = is_dispatchable(acc, req)
         (pool if ok else excluded).append((acc, why))
@@ -293,6 +315,15 @@ async def run_dispatch(
         },
         request_id=str(req.id),
     )
+
+    # Order: on an ICU case the proven donors go to the front of the queue.
+    # This is the only thing the Golden Donor badge buys, and it is applied
+    # here — after the pool is settled — so it can never change *who* is
+    # reachable, only the sequence they are reached in.
+    icu = is_icu_critical(req)
+    if icu:
+        reachable = order_candidates(reachable, req)
+    golden_first = sum(1 for acc, _ in reachable if priority_tier(acc, req) == 0)
 
     results, pinged_count, zone_tally = [], 0, {}
 
@@ -380,6 +411,8 @@ async def run_dispatch(
         results.append({
             "donor_id": str(acc.id), "donor_name": acc.name,
             "distance_km": round(km, 2) if km is not None else None,
+            "priority_tier": TIER_LABELS[priority_tier(acc, req)],
+            "golden_donor": acc.golden.is_golden,
             "delivery": delivery, "sms": sms, **d,
         })
 
@@ -414,6 +447,10 @@ async def run_dispatch(
             for a, km in out_of_range
         ],
         "reachable": len(reachable),
+        "golden_donors_prioritised": golden_first if icu else 0,
+        "ping_order": (
+            "Golden Donors first, then nearest first." if icu else "Nearest first."
+        ),
         "pinged": pinged_count,
         "skipped": len(reachable) - pinged_count,
         "push_delivery": (

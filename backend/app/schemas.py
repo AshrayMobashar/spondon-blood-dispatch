@@ -239,6 +239,13 @@ class RequestCreate(BaseModel):
     road_segment: Optional[str] = Field(None, examples=["Kazipara"])
     hospital_lat: Optional[float] = Field(None, examples=[23.7261])
     hospital_lng: Optional[float] = Field(None, examples=[90.3969])
+    icu: bool = Field(
+        False,
+        description=(
+            "The patient is in intensive care. Turns on Golden Donor priority "
+            "placement for this dispatch."
+        ),
+    )
     requester_id: Optional[str] = Field(
         None, description="Ignored when an Authorization header is present"
     )
@@ -317,6 +324,36 @@ class CallFallbackIn(BaseModel):
 
 class CallEndIn(BaseModel):
     reason: str = Field("COMPLETED", description="COMPLETED | CANCELLED", examples=["COMPLETED"])
+
+
+# ── Feature 3.3 — Golden Donor Verification ──────────────────────────
+class GoldenCityUpdate(BaseModel):
+    """A donor telling us where they now live.
+
+    Sent when they move away *and* when they come back — the same field carries
+    both, because a relocation the donor can declare but not undo would strand
+    a returning donor outside the priority pool until their GPS caught up.
+    """
+    city: Optional[str] = Field(
+        None,
+        description=(
+            'City the donor is currently based in. Send "" or null to clear the '
+            "declaration and fall back to their GPS fix."
+        ),
+        examples=["Chattogram"],
+    )
+
+
+class GoldenPriorityPreview(BaseModel):
+    """Ask the engine how it *would* order the pings for one request.
+
+    A dry run: it writes nothing and pings nobody. It exists so the ordering
+    can be demonstrated and audited without a real emergency being dispatched.
+    """
+    request_id: str = Field(..., description="The request to order candidates for")
+    blood_type: Optional[str] = Field(
+        None, description="Override the request's blood type for a what-if run"
+    )
 
 
 # ── Admin console ────────────────────────────────────────────────────

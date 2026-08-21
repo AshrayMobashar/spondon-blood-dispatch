@@ -252,6 +252,35 @@ export const leaderboardApi = {
     ),
 }
 
+/* ── Golden Donor Verification ───────────────────────────────────── */
+/** Three confirmed donations earn a verified badge and priority placement on
+ *  ICU dispatches. Everything under /me acts on whoever holds the token —
+ *  there is no donor id to pass, so one donor can never move another's status. */
+export const goldenApi = {
+  /** The published thresholds. Open, so the terms can be read before signing up. */
+  rules: () => request('/golden/rules', { auth: false }),
+  /** A pure read: it reports the real status and deliberately does NOT count as
+   *  activity, or a dormant donor could never see their own suspension. */
+  me: () => request('/golden/me', { auth: 'user' }),
+  /** The explicit "I opened the app" signal — the restoration path for a
+   *  Golden Donor whose priority lapsed after six months of silence. */
+  heartbeat: () => request('/golden/me/heartbeat', { method: 'POST', auth: 'user' }),
+  /** Declares a relocation, and the return from one. Send '' to clear it and
+   *  fall back to the donor's GPS fix. */
+  setCity: (city) =>
+    request('/golden/me/city', { method: 'PUT', auth: 'user', body: { city } }),
+  /** The roll of honour. Signed-in users only — a name and a donation count is
+   *  fine among members, not something to publish to the open internet. */
+  roster: (status) =>
+    request(`/golden/roster${status ? `?status=${encodeURIComponent(status)}` : ''}`, {
+      auth: 'user',
+    }),
+  badge: (donorId) => request(`/golden/donors/${donorId}`, { auth: 'user' }),
+  /** Dry run: how this request's pings would be ordered. Writes nothing. */
+  priorityOrder: (requestId) =>
+    request(`/golden/requests/${requestId}/priority`, { auth: 'user' }),
+}
+
 /* ── Live En-Route Tracker ───────────────────────────────────────── */
 /** Only the family who opened a request and the donor who accepted it can
  *  reach any of these — the server enforces it, so a 403 here is the feature

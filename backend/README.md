@@ -17,6 +17,7 @@ student ID 23101184).
 | Admin Role & Access Management (ban / shadow ban) | `app/routers/admin.py` |
 | M3.1 — Live En-Route Tracker | `app/tracking.py`, `app/routers/tracking.py` |
 | M3.2 — Direct-Connect Masked Calling | `app/masking.py`, `app/routers/calling.py` |
+| M3.3 — Golden Donor Verification + ICU priority | `app/golden.py`, `app/routers/golden.py` |
 
 Interactive reference: **`http://localhost:1184/docs`** (generated from the code, so it
 never goes stale). Narrative reference with samples → [`API_DOCS.md`](./API_DOCS.md).
@@ -34,6 +35,7 @@ pip install -r requirements.txt
 cp .env.example .env
 python seed_admin.py                 # demo accounts, requests, one pending certificate
 python seed_leaderboard.py           # universities + 13 months of leaderboard history
+python seed_golden.py                # one donor per Golden Donor state + an ICU request
 python -m app.main
 ```
 Server: `http://localhost:1184` · Swagger UI: `http://localhost:1184/docs`
@@ -92,6 +94,7 @@ backend/
     integrations.py    # SMS, FCM, OCR, Maps, blood-bank & NGO adapters
     leaderboard.py     # varsity month windows, scoring aggregation, tie-break
     tracking.py        # ETA + signal-freshness maths (pure, no I/O)
+    golden.py          # Golden Donor engine — the one writer for the badge
     masking.py         # number masking + atomic GSM proxy-number pool
     realtime.py        # public radar feed + private per-trip rooms
     routers/
@@ -100,6 +103,7 @@ backend/
       smart_ping.py    # sleep mode, commute route, location, dispatch
       concurrency.py   # requests, slip OCR, atomic accept, arrivals, appeals
       leaderboard.py   # public monthly varsity ranking + month window
+      golden.py        # badge, ICU priority, relocation + dormancy suspension
       admin.py         # console: ripples, slips, moderation, certs, escalations
       tracking.py      # trip start / position / batch replay / arrival
       calling.py       # masked call channel, GSM fallback, teardown
@@ -107,6 +111,7 @@ backend/
   .env.example
   seed_admin.py
   seed_leaderboard.py
+  seed_golden.py
   smoke_test.py
   Spondon.postman_collection.json
   API_DOCS.md

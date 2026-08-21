@@ -56,6 +56,7 @@ cp .env.example .env          # then edit if needed
 # 4. Seed demo data (admin account + sample donors & requests)
 python seed_admin.py
 python seed_leaderboard.py    # varsity nodes + 13 months of leaderboard history
+python seed_golden.py         # one donor per Golden Donor state + an ICU request
 
 # 5. Run the API (port 1184)
 python -m app.main
@@ -174,6 +175,21 @@ confirmed. An unreadable slip is never auto-rejected; it goes to a human queue.
 
 **Concurrency Lock & Accountability** — the first donor to accept atomically locks a
 request (`find_one_and_update` compare-and-swap); no-show tracking and appeals.
+
+**Golden Donor Verification** — three donations a hospital *confirmed the donor attended*
+earn a verified Golden Donor badge, and the badge buys one thing: on an ICU dispatch its
+holder is pinged before everybody else. Only confirmed arrivals count, so the badge cannot
+be farmed by tapping Accept and never turning up, and the priority reorders without ever
+filtering — a donor with no badge is still reached for the same ICU case, just not first.
+
+> **The ghost-donor corner case.** A holder who relocates out of Dhaka, or who has not
+> opened the app for six months, has their *priority* suspended — not their badge. Priority
+> placement means the dispatcher spends its first seconds on that donor, and spending them
+> on a phone in Chattogram, or one nobody has opened since February, costs an ICU patient
+> the very seconds the priority existed to buy. Three donations are a fact about the past
+> and moving house does not undo them, so the badge stays; the priority returns
+> automatically the moment the donor opens the app or says they are back, with nothing to
+> apply for and no admin in the loop.
 
 **Admin Role & Access Management** — the console described above.
 

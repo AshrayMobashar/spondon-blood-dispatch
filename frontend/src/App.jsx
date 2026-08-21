@@ -14,6 +14,7 @@ import VarsityLeaderboard from './pages/leaderboard/VarsityLeaderboard.jsx'
 import LiveTracker from './pages/patient/LiveTracker.jsx'
 import EnRoute from './pages/donor/EnRoute.jsx'
 import DonorProfile from './pages/donor/DonorProfile.jsx'
+import GoldenDonor from './pages/donor/GoldenDonor.jsx'
 import IncomingRequests from './pages/donor/IncomingRequests.jsx'
 import Ashray3 from './pages/Ashray3.jsx'
 import GeoRipple from './pages/admin/GeoRipple.jsx'
@@ -50,6 +51,7 @@ function App() {
       <Route path="/donor/records" element={<UpdateRecords />} />
       <Route path="/donor/weight" element={<WeightValidation />} />
       <Route path="/donor/profile" element={<DonorProfile />} />
+      <Route path="/donor/golden" element={<GoldenDonor />} />
       <Route path="/donor/requests" element={<IncomingRequests />} />
       <Route path="/donor/en-route" element={<EnRoute />} />
       <Route path="/donor/en-route/:requestId" element={<EnRoute />} />
