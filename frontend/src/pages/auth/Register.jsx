@@ -18,13 +18,6 @@ const roles = [
     title: 'Blood Donor',
     body: 'Complete your health profile, set availability and sleep mode, and receive targeted emergency pings.',
   },
-  {
-    to: '/login',
-    icon: Building2,
-    accent: 'admin',
-    title: 'Hospital / Admin',
-    body: 'Verified authorities monitor the dispatch canvas, verify slips, and manage the donor network.',
-  },
 ]
 
 const styles = {
@@ -35,7 +28,7 @@ const styles = {
 
 export default function Register() {
   return (
-    <Shell center max="max-w-4xl">
+    <Shell center max="max-w-2xl">
       <div className="w-full text-center">
         <h1 className="text-3xl font-bold">Create your account</h1>
         <p className="mt-2 text-sm text-text-faint">
@@ -43,7 +36,7 @@ export default function Register() {
         </p>
       </div>
 
-      <div className="mt-10 grid w-full grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="mx-auto mt-10 grid w-full grid-cols-1 gap-4 md:grid-cols-2">
         {roles.map((r) => {
           const s = styles[r.accent]
           return (

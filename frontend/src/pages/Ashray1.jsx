@@ -13,6 +13,7 @@ import dnd from '../assets/icons/dnd.svg'
 import { configApi, donorApi, requestApi } from '../lib/api.js'
 import { useSession } from '../lib/session.js'
 import CommuteMap from '../components/CommuteMap.jsx'
+import Shell from '../components/Shell.jsx'
 
 /* ── Small building blocks ───────────────────────────────────────── */
 function Toggle({ on, color = 'bg-donor', onChange, disabled }) {
@@ -373,45 +374,28 @@ export default function Ashray1() {
       ]
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-ink text-white">
-      {/* Ambient glows */}
-      <div className="pointer-events-none absolute -left-12 -top-60 h-[486px] w-[400px] rounded-full bg-primary opacity-[0.04] blur-[40px]" />
-      <div className="pointer-events-none absolute left-[840px] top-[280px] size-[500px] rounded-full bg-donor opacity-5 blur-[50px]" />
-      <div className="pointer-events-none absolute left-[680px] top-[200px] size-[300px] rounded-full bg-admin opacity-[0.04] blur-[35px]" />
-
-      {/* Top bar */}
-      <header className="relative z-20 border-b border-line">
-        <div className="flex h-16 items-center justify-between gap-4 px-8">
-          <div className="flex items-center gap-4">
-            <Link to="/" className="flex items-center gap-3">
-              <span className="grid size-8 place-items-center rounded-lg bg-primary">
-                <img src={logo} alt="" className="size-[18px]" />
-              </span>
-              <span className="text-xl font-bold tracking-tight">Spondon</span>
-            </Link>
-            <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-              DONOR PANEL
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            <Chip>
-              <span className={`size-2 rounded-full ${elig?.eligible ? 'bg-success' : 'bg-warning'}`} />
-              {elig?.eligible ? 'Live Dispatch Active' : 'Paused — not eligible'}
-            </Chip>
-            <Chip>
-              <img src={userIcon} alt="" className="size-3.5" />
-              {donor?.name}
-              <span className="font-bold text-primary">{donor?.blood_type}</span>
-            </Chip>
-            <Chip>
-              <img src={pingsIcon} alt="" className="size-3.5" />
-              <span className="font-semibold text-warning">{weekPings} pings this week</span>
-            </Chip>
-          </div>
-        </div>
-      </header>
-
-      <div className="relative z-10 flex flex-col lg:flex-row">
+    <Shell
+      panel="DONOR PANEL"
+      panelColor="donor"
+      right={
+        <>
+          <Chip>
+            <span className={`size-2 rounded-full ${elig?.eligible ? 'bg-success' : 'bg-warning'}`} />
+            {elig?.eligible ? 'Live Dispatch Active' : 'Paused — not eligible'}
+          </Chip>
+          <Chip>
+            <img src={userIcon} alt="" className="size-3.5" />
+            {donor?.name}
+            <span className="font-bold text-primary">{donor?.blood_type}</span>
+          </Chip>
+          <Chip>
+            <img src={pingsIcon} alt="" className="size-3.5" />
+            <span className="font-semibold text-warning">{weekPings} pings this week</span>
+          </Chip>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-6 lg:flex-row">
         {/* Sidebar */}
         <aside className="w-full shrink-0 border-b border-line lg:w-[340px] lg:border-b-0 lg:border-r">
           <div className="border-b border-line px-5 py-5">
@@ -1060,6 +1044,6 @@ export default function Ashray1() {
           </div>
         </main>
       </div>
-    </div>
+    </Shell>
   )
 }
