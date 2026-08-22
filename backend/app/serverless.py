@@ -89,16 +89,18 @@ SWEEP_BUDGET_SECONDS = 5.0
 async def nudge() -> None:
     """Run whichever sweeps are due, before the caller's request proceeds.
 
-    Awaited on purpose, and this is the whole reason the module works. The
-    obvious implementation — `asyncio.create_task(sweep_due())` — measurably
-    does not run on Vercel: the instance is frozen once the response is
-    written, so a task scheduled to finish afterwards is simply never resumed.
-    Verified the hard way, with a bounty left OPEN past its deadline that no
-    amount of traffic would close.
+    Awaited on purpose. The obvious alternative —
+    `asyncio.create_task(sweep_due())`, so the caller never waits — depends on
+    the instance still being alive after the response is written, and a
+    serverless host gives no such guarantee: it may suspend as soon as the
+    response is flushed, leaving the task unresumed. A sweep that runs only
+    when the platform happens to feel generous is not a sweep, so the request
+    pays for it instead.
 
-    So the request pays for the sweep. Rate limiting in `_run` keeps that
-    honest: each sweep still fires at most once per its configured interval, so
-    the cost lands on roughly one request per interval, not on every request.
+    Rate limiting in `_run` keeps that affordable: each sweep still fires at
+    most once per its configured interval, so the cost lands on roughly one
+    request per interval, not on every request, and `SWEEP_BUDGET_SECONDS`
+    caps what a slow database can do to whoever draws the short straw.
     """
     if not ON_SERVERLESS:
         return

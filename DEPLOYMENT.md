@@ -1,31 +1,64 @@
 # Deploying Spondon
 
-Three pieces, three hosts. The split is not arbitrary — it follows from what
-the API actually needs at runtime.
+The live deployment is one Vercel project serving both halves from one origin,
+against MongoDB Atlas.
 
 ```
-Vercel          ->  frontend   (Vite SPA, static)
-Render          ->  backend    (FastAPI under uvicorn, always-on process)
+Vercel project  ->  frontend  (Vite SPA, static)
+                ->  backend   (FastAPI, Python function)
 MongoDB Atlas   ->  database
 ```
 
-## Why the API is not on Vercel
+`vercel.json` at the repo root is what makes that one project rather than two:
+it declares a `frontend` and a `backend` service and routes between them.
 
-Serverless functions run per-request and freeze in between. Two parts of this
-codebase need a process that stays alive:
-
-| Needs a live process | Where |
+| Path | Goes to |
 |---|---|
-| `escalation_watcher` — sweeps dead-end rare-blood requests every 20 s | `app/dispatch.py` |
-| `trip_watcher` — freezes silent trips every 5 s | `app/main.py` |
-| `bounty_watcher` — issues ride promo codes every 15 s | `app/bounty.py` |
-| `/ws/dispatch`, `/ws/trip`, `/ws/call` — held-open WebSockets | `app/main.py` |
+| `/api/*` | backend |
+| `/ws/*` | backend — the dispatch, trip and call sockets |
+| `/docs`, `/redoc`, `/openapi.json` | backend — the interactive API docs |
+| everything else | frontend |
 
-On serverless, all three sweeps would simply never run: rare-blood escalation
-would not fire, "signal lost" would never appear on a live tracker, and a
-platelet donor whose 15-minute window lapsed would never get their ride code.
-Vercel does support WebSockets, but only on Node runtimes — there is no
-Python/ASGI path — so the radar, tracker and masked calling would break too.
+The order matters: the last rule is a catch-all, so anything the backend owns
+has to be listed above it. `/ws/*` in particular was missing at first, which
+left the radar and tracker sockets being answered by the SPA's `index.html`.
+
+One origin also means **CORS never comes into play** — the browser is calling
+the same host it loaded the page from. `CORS_ORIGINS` only matters if you split
+the two halves across hosts.
+
+---
+
+## What serverless changes, stated plainly
+
+Two claims in the feature docs stop being true on Vercel. Both are visible in
+`GET /api/health` under `sweeps`, so you never have to guess which mode a
+deployment is in.
+
+**The timed sweeps are driven by requests, not by a clock.** `escalation_watcher`,
+`trip_watcher` and `bounty_watcher` are `while True` loops; a suspended instance
+does not reliably wake to run them. `app/serverless.py` runs the same four
+sweeps off incoming requests instead, each still honouring its own interval.
+
+This degrades rather than breaks, and only because no deadline in this codebase
+lives in an in-process timer — `expires_at` on a bounty, `escalation_due` on a
+rare request and the last-ping time on a trip are all facts in the database,
+compared against the clock at sweep time. A sweep that happens late still
+reaches the right verdict. **But with nobody using the app, nothing sweeps at
+all**: a donor owed a ride code at 14:03 gets it when the next request arrives.
+
+The sweep is awaited inside the request, which is not an accident. Scheduling it
+with `asyncio.create_task` so the caller would not wait does not work here — the
+instance freezes once the response is written and the task is never resumed.
+
+**WebSockets reconnect on the function's duration limit.** They do work: Vercel
+supports them on Python functions. But a function has a maximum duration (60 s
+on Hobby), so a held-open socket is cut at that ceiling. `realtime.js`,
+`trip.js` and `voice.js` all reconnect with exponential backoff, so the radar
+and tracker recover on their own — with a blip at each cycle.
+
+If either of those matters more than the convenience of one host, `render.yaml`
+still describes the always-on deployment, where both behave as the docs say.
 
 ---
 
@@ -33,71 +66,73 @@ Python/ASGI path — so the radar, tracker and masked calling would break too.
 
 1. Create a free **M0** cluster at <https://www.mongodb.com/atlas>.
 2. **Database Access** -> add a user with a password. Copy both.
-3. **Network Access** -> add `0.0.0.0/0`. Render's free tier has no static
-   egress IP, so an allowlist cannot be narrowed here. This is the weakest link
-   in the setup: the cluster is reachable from anywhere that has the password.
-   Use a long generated password, and never commit the URI.
+3. **Network Access** -> add `0.0.0.0/0`. Vercel functions have no fixed egress
+   IP, so an allowlist cannot be narrowed here. This is the weakest link in the
+   setup: the cluster is reachable from anywhere that has the password. Use a
+   long generated password, and never commit the URI.
 4. Copy the SRV connection string:
-   `mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority`
+   `mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/spondon?retryWrites=true&w=majority`
 
-## 2. Backend on Render
+> The API never echoes this string back. `db.safe_uri()` strips the password
+> before it reaches `/api/health` or a 503 hint, both of which are public and
+> unauthenticated. If you add another place that reports the URI, route it
+> through `safe_uri()` too.
 
-1. **New -> Blueprint**, point at this repo. `render.yaml` is picked up
-   automatically and creates the `spondon-api` web service.
-2. In the service's **Environment** tab set the two secrets the blueprint
-   deliberately leaves blank:
-   - `MONGODB_URI` — the Atlas string from step 1
-   - `CORS_ORIGINS` — the deployed frontend origin, e.g.
-     `https://spondon.vercel.app` (comma-separated; never `*`, which would let
-     any page on the internet call this API from a signed-in user's browser)
-3. `JWT_SECRET` is generated by Render on first deploy and then left alone.
-   Rotating it invalidates every issued session token.
-4. Seed the database once the service is live, from the Render **Shell**:
-   ```bash
-   python seed_admin.py
-   python seed_leaderboard.py
-   python seed_golden.py
-   python seed_bounty.py
-   ```
+Seed the database once, from a machine with the URI in its environment:
 
-### The free-tier caveat, stated plainly
+```bash
+cd backend
+MONGODB_URI='mongodb+srv://...' python seed_admin.py
+MONGODB_URI='mongodb+srv://...' python seed_leaderboard.py
+MONGODB_URI='mongodb+srv://...' python seed_golden.py
+MONGODB_URI='mongodb+srv://...' python seed_bounty.py
+```
 
-A Render free web service **spins down after ~15 minutes with no inbound
-traffic**, and cold-starts on the next request. While it is asleep the sweepers
-are not running.
+There is no shell on Vercel to run these from, which is why they run locally
+against the remote cluster rather than on the host.
 
-This degrades rather than breaks, because every deadline in this codebase lives
-in the database rather than in an in-process timer. `bounty_watcher` reads
-`expires_at` off the document, so a bounty whose window lapsed during a
-spin-down gets its promo code issued on the next wake — late, not never. Same
-for rare-blood escalation. If the lateness matters for a demo, either keep the
-service warm with an uptime pinger or move it to a paid instance.
+## 2. The Vercel project
 
-## 3. Frontend on Vercel
+1. **Add New -> Project**, import this repo. Leave **Root Directory** at the
+   repo root — the root `vercel.json` builds both services from there. Setting
+   it to `frontend` or `backend` gets you one half and a 404 for the other.
+2. Set two environment variables:
 
-1. **Add New -> Project**, import this repo, set **Root Directory** to
-   `frontend`. `frontend/vercel.json` supplies the rest.
-2. Set the environment variable:
-   - `VITE_API_URL` = the Render URL, e.g. `https://spondon-api.onrender.com`
+   | Key | Value |
+   |---|---|
+   | `MONGODB_URI` | the Atlas SRV string from step 1 |
+   | `VITE_API_URL` | the deployment's own origin, e.g. `https://spondon.vercel.app` |
 
-   This is a **build-time** variable — Vite inlines it into the bundle. Changing
-   it requires a redeploy, not just a restart.
+3. Redeploy after setting them.
 
-   Optionally also set `VITE_GOOGLE_MAPS_API_KEY` (Maps JavaScript API +
-   billing) for the City-Wide Radar's map. Without it the radar falls back to
-   its built-in SVG diagram, so the view still works. Because Vite inlines it,
-   this key ships in the bundle and is readable by anyone — restrict it by HTTP
-   referrer to the Vercel origin in the Google Cloud console. The full list is
-   in `frontend/.env.example`.
-3. Redeploy after setting it, then go back and put the resulting Vercel origin
-   into Render's `CORS_ORIGINS`. The two hosts have to learn each other's URLs,
-   so one redeploy on each side is unavoidable.
+### `VITE_API_URL` is the origin, not a path
 
-### Why `vercel.json` matters
+Vite inlines this at **build** time, so changing it needs a redeploy, not a
+restart — and the value must be the full origin with scheme.
 
-The app uses `BrowserRouter`. Without the rewrite to `/index.html`, every deep
-link and every refresh away from `/` — `/donor/bounties`, `/admin` — returns a
-404 from Vercel's static handler, because there is no file at that path.
+The client composes requests as `` `${BASE}/api${path}` `` and derives the
+socket URL as `BASE.replace(/^http/, 'ws')`. Setting it to `/api` therefore
+produces `/api/api/health` — every call 404s while the site still loads and
+looks healthy — and leaves the socket URL with no scheme to rewrite. Setting it
+to the origin produces `https://host/api/health` and `wss://host/ws/dispatch`.
+
+Because it is the deployment's own origin, these are same-origin requests
+despite being absolute.
+
+## 3. Python runtime notes
+
+`backend/app/main.py` is a supported FastAPI entrypoint, so no wrapper module is
+needed; `vercel.json` names it explicitly under the `backend` service.
+`.python-version` pins 3.12 and `backend/.vercelignore` keeps the local `.venv`
+and the ad-hoc `test_*.py` / `check_*.py` probes out of the upload.
+
+The database connection is opened **awaited** on a serverless host rather than
+retried in the background. The background retry is right for an always-on
+server — it boots immediately and says the database is down — but a cold
+function is handed a request the moment lifespan returns, so the readiness guard
+would reject it while Beanie was still binding. That failure is confusing on
+sight, because `/api/health` pings the client directly and reports the database
+as fine at the same moment every data route returns 503.
 
 ---
 
@@ -105,14 +140,14 @@ link and every refresh away from `/` — `/donor/bounties`, `/admin` — returns
 
 | Where | Key | Value |
 |---|---|---|
-| Render | `MONGODB_URI` | Atlas SRV string (secret) |
-| Render | `CORS_ORIGINS` | `https://<your-app>.vercel.app` |
-| Render | `JWT_SECRET` | generated by Render |
-| Render | `GOOGLE_MAPS_API_KEY` | optional — Routes API, for driving distance |
-| Vercel | `VITE_API_URL` | `https://<your-api>.onrender.com` |
+| Vercel | `MONGODB_URI` | Atlas SRV string (secret) |
+| Vercel | `VITE_API_URL` | the deployment's own origin |
+| Vercel | `GOOGLE_MAPS_API_KEY` | optional — Routes API, for driving distance |
 | Vercel | `VITE_GOOGLE_MAPS_API_KEY` | optional — Maps JavaScript API, for the radar map |
+| Vercel | `CORS_ORIGINS` | only needed if the frontend is served from another host |
 
 The two Maps keys are independent and separately optional — each unset key
-degrades one feature to its fallback rather than breaking it. Everything else
-has a working default in `render.yaml`; the full lists with explanations are in
-`backend/.env.example` and `frontend/.env.example`.
+degrades one feature to its fallback rather than breaking it. `VITE_GOOGLE_MAPS_API_KEY`
+ships in the bundle by definition; restrict it by HTTP referrer in the Google
+Cloud console. Everything else has a working default; the full lists with
+explanations are in `backend/.env.example` and `frontend/.env.example`.
