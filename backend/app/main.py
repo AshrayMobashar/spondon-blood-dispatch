@@ -144,8 +144,9 @@ async def require_database(request: Request, call_next):
             },
         )
     # No-op off serverless. There, this is what actually runs the escalation,
-    # trip, call and bounty sweeps; it does not block this request.
-    serverless.nudge()
+    # trip, call and bounty sweeps — awaited, because a task left to finish
+    # after the response is written does not survive the instance freezing.
+    await serverless.nudge()
     return await call_next(request)
 
 
@@ -230,6 +231,10 @@ async def health():
             "database": "ok" if ok else "unreachable",
             "database_uri": db_module.safe_uri(),
             "error": error,
+            # Which of the two sweep strategies is live. On a serverless host
+            # the timed guarantees in the feature docs do not hold, and that
+            # should be visible here rather than inferred from behaviour.
+            "sweeps": serverless.status(),
         },
     )
 

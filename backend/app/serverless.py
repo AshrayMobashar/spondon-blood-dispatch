@@ -80,18 +80,44 @@ async def sweep_due() -> None:
     )
 
 
-def nudge() -> None:
-    """Fire the due sweeps in the background. Never blocks the caller.
+#: Ceiling on how long a request will wait for the sweeps. They are four small
+#: indexed queries; if they are slower than this something is wrong with the
+#: database, and the caller's own request is the thing worth protecting.
+SWEEP_BUDGET_SECONDS = 5.0
 
-    Deliberately not awaited by the request that triggers it. A family loading
-    the tracker should not wait on a bounty sweep to get their page.
+
+async def nudge() -> None:
+    """Run whichever sweeps are due, before the caller's request proceeds.
+
+    Awaited on purpose, and this is the whole reason the module works. The
+    obvious implementation — `asyncio.create_task(sweep_due())` — measurably
+    does not run on Vercel: the instance is frozen once the response is
+    written, so a task scheduled to finish afterwards is simply never resumed.
+    Verified the hard way, with a bounty left OPEN past its deadline that no
+    amount of traffic would close.
+
+    So the request pays for the sweep. Rate limiting in `_run` keeps that
+    honest: each sweep still fires at most once per its configured interval, so
+    the cost lands on roughly one request per interval, not on every request.
     """
     if not ON_SERVERLESS:
         return
-    task = asyncio.create_task(sweep_due())
-    # Hold a reference or the loop may garbage-collect the task mid-flight.
-    _pending.add(task)
-    task.add_done_callback(_pending.discard)
+    try:
+        await asyncio.wait_for(sweep_due(), timeout=SWEEP_BUDGET_SECONDS)
+    except Exception:
+        # Never let sweep trouble become the caller's error. The next request
+        # picks the work back up.
+        log.debug("Request-triggered sweep did not finish in budget", exc_info=True)
 
 
-_pending: set[asyncio.Task] = set()
+def status() -> dict:
+    """How sweeps are being driven here, for `/api/health` to report."""
+    if not ON_SERVERLESS:
+        return {"mode": "timers", "detail": "background watchers running in-process"}
+    return {
+        "mode": "request-driven",
+        "detail": "serverless host — sweeps run on incoming requests, so they "
+                  "are late rather than never, and do not run at all while the "
+                  "app is idle",
+        "ran": sorted(_last_run),
+    }
