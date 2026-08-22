@@ -264,6 +264,32 @@ OCR_CONFIDENCE_THRESHOLD = _float("OCR_CONFIDENCE_THRESHOLD", 0.75)
 # HOLD_OFF or DISPATCH_NOW verdict. Fewer than this yields INCONCLUSIVE.
 CBC_MIN_REPORTS = _int("CBC_MIN_REPORTS", 2)
 
+# ── Post-Donation Ride Community Bounty (Module 3, Feature 4) ────────
+# A platelet donor leaves depleted, so the moment their arrival is confirmed
+# the community is asked for a lift home. The window below is how long that
+# ask stays open before the promo-code fallback fires — the corner case that
+# guarantees nobody is left standing outside a hospital at night.
+BOUNTY_WINDOW_MINUTES = _int("BOUNTY_WINDOW_MINUTES", 15)
+# How far from the hospital a community driver can be and still be asked.
+BOUNTY_RADIUS_KM = _float("BOUNTY_RADIUS_KM", 5.0)
+# How often the server sweeps for bounties whose window has run out. Like the
+# rare-blood escalation, the fallback has to be automatic: it must not wait for
+# the donor's phone to be awake and asking.
+BOUNTY_SWEEP_SECONDS = _int("BOUNTY_SWEEP_SECONDS", 15)
+# Vehicle types that make an account a candidate community driver.
+BOUNTY_VEHICLE_TYPES = ("car", "bike")
+# Ride-sharing partners the subsidy is drawn against, in preference order.
+RIDE_PARTNERS = [
+    p.strip() for p in os.getenv("RIDE_PARTNERS", "Pathao,Uber").split(",") if p.strip()
+]
+# Printed on the front of every generated code so a donor reading it aloud to a
+# driver can say where it came from.
+BOUNTY_PROMO_PREFIX = os.getenv("BOUNTY_PROMO_PREFIX", "SPONDON")
+# How long an issued promo code stays redeemable.
+BOUNTY_PROMO_TTL_HOURS = _int("BOUNTY_PROMO_TTL_HOURS", 24)
+# Face value of the subsidy, in BDT — what the partnership covers.
+BOUNTY_PROMO_VALUE_BDT = _int("BOUNTY_PROMO_VALUE_BDT", 300)
+
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")   # driving-route distance
 BLOOD_BANK_API_URL = os.getenv("BLOOD_BANK_API_URL")     # national registry
 BLOOD_BANK_API_KEY = os.getenv("BLOOD_BANK_API_KEY")
@@ -329,4 +355,12 @@ def public_config() -> dict:
         },
         "otp": {"length": OTP_LENGTH, "ttl_seconds": OTP_TTL_SECONDS},
         "cbc_triage": {"min_reports": CBC_MIN_REPORTS},
+        "ride_bounty": {
+            "window_minutes": BOUNTY_WINDOW_MINUTES,
+            "radius_km": BOUNTY_RADIUS_KM,
+            "vehicle_types": list(BOUNTY_VEHICLE_TYPES),
+            "partners": RIDE_PARTNERS,
+            "promo_value_bdt": BOUNTY_PROMO_VALUE_BDT,
+            "promo_ttl_hours": BOUNTY_PROMO_TTL_HOURS,
+        },
     }

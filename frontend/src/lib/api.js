@@ -377,7 +377,26 @@ export const cbcApi = {
     request('/cbc/sessions', { auth: 'user' }),
 }
 
+/* ── Post-Donation Ride Community Bounty ────────────────────── */
 export const bountyApi = {
-    list: () => request('/bounties', { auth: 'user' }),
-    accept: (id) => request(/bounties//accept, { method: 'POST', auth: 'user' })
+  /** Window, radius and partner list — so UI copy never hard-codes "15 minutes". */
+  rules: () => request('/bounties/rules', { auth: false }),
+
+  /** Open bounties this driver can answer, plus rides they already took on. */
+  list: () => request('/bounties', { auth: 'user' }),
+
+  /** The signed-in donor's own bounties — the only place the promo code appears. */
+  mine: () => request('/bounties/mine', { auth: 'user' }),
+
+  /** Claim a bounty. One driver wins; the rest get a 409. */
+  accept: (id) =>
+    request(`/bounties/${id}/accept`, { method: 'POST', auth: 'user' }),
+
+  /** Either party closes the ride out once the donor is home. */
+  complete: (id) =>
+    request(`/bounties/${id}/complete`, { method: 'POST', auth: 'user' }),
+
+  /** Demo aid: collapse the wait so the promo fallback can be shown live. */
+  expireNow: (id) =>
+    request(`/bounties/${id}/expire-now`, { method: 'POST', auth: 'user' }),
 }

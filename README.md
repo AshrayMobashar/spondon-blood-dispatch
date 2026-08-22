@@ -16,6 +16,7 @@ spondon-blood-dispatch/
     ├── app/         models, routers, engines, integrations, security (JWT)
     ├── seed_admin.py
     ├── seed_leaderboard.py
+    ├── seed_bounty.py
     ├── smoke_test.py
     └── postman/     Postman collection for the API
 ```
@@ -57,6 +58,7 @@ cp .env.example .env          # then edit if needed
 python seed_admin.py
 python seed_leaderboard.py    # varsity nodes + 13 months of leaderboard history
 python seed_golden.py         # one donor per Golden Donor state + an ICU request
+python seed_bounty.py         # ride bounties: one open, one accepted, one promo-code
 
 # 5. Run the API (port 1184)
 python -m app.main
@@ -80,6 +82,8 @@ Key `.env` settings (see `backend/.env.example` for the full list):
 | `RARE_ESCALATION_SECONDS` | `180` | Unanswered rare-blood ping → external sourcing (lower it for a demo) |
 | `ESCALATION_SWEEP_SECONDS` | `20` | How often the server sweeps for those dead ends |
 | `RARE_SMS_ALERTS` | `true` | Send SMS alongside the push on a city-wide rare ping |
+| `BOUNTY_WINDOW_MINUTES` | `15` | Ride-bounty window before the promo-code fallback fires |
+| `BOUNTY_RADIUS_KM` | `5.0` | How far a community driver can be and still be asked |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` | — | Twilio SMS; used ahead of the local gateway when set |
 
 Verify the whole thing with `python smoke_test.py` against a running server — 55

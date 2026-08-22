@@ -281,11 +281,20 @@ Donor = Account
 BOUNTY_OPEN = "OPEN"
 BOUNTY_ACCEPTED = "ACCEPTED"
 BOUNTY_PROMO_GENERATED = "PROMO_GENERATED"
+BOUNTY_COMPLETED = "COMPLETED"
+
 
 class RideBounty(Document):
     """A community bounty generated when a donor completes a platelet donation.
-    Alerts nearby drivers to offer a free ride home. If no one accepts within
-    15 minutes, a digital promo code is automatically generated."""
+
+    Alerts nearby drivers to offer a free ride home. If no one accepts before
+    `expires_at`, the server mints a subsidised ride-share promo code for the
+    donor instead — the guarantee that a depleted donor is never left stranded.
+
+    The deadline lives on the document rather than in an in-process timer, so a
+    server restart mid-window cannot swallow a donor's fallback: the sweep
+    reads it back and issues the code late rather than never.
+    """
     request_id: str
     donor_id: str
     donor_name: str
@@ -294,8 +303,21 @@ class RideBounty(Document):
     status: str = BOUNTY_OPEN
     driver_id: Optional[str] = None
     driver_name: Optional[str] = None
+    driver_phone: Optional[str] = None
+    driver_vehicle: Optional[str] = None
+    # Who was asked, and how many — shown to the donor as "12 neighbours asked"
+    # so an unanswered bounty reads as bad luck rather than as a broken feature.
+    alerted_driver_ids: List[str] = Field(default_factory=list)
+    alerted_count: int = 0
+    # ── Promo fallback ──
     promo_code: Optional[str] = None
+    promo_partner: Optional[str] = None
+    promo_value_bdt: Optional[int] = None
+    promo_simulated: bool = False
+    promo_issued_at: Optional[datetime] = None
+    promo_expires_at: Optional[datetime] = None
     accepted_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
     expires_at: datetime
     created_at: datetime = Field(default_factory=utcnow)
 
