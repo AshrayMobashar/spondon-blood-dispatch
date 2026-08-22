@@ -20,6 +20,7 @@ import jwt
 
 from . import config, db as db_module, integrations, zones
 from . import tracking as app_tracking
+from .bounty import bounty_watcher
 from .dispatch import escalation_watcher
 from .models import Account, BloodRequest
 from .security import AUD_USER
@@ -28,7 +29,7 @@ from .realtime import call_room, feed, trip_room
 log = logging.getLogger("spondon.main")
 from .routers import (
     auth, smart_ping, donor_health, concurrency, admin, leaderboard, tracking, calling,
-    golden, cbc_triage,
+    golden, cbc_triage, bounty,
 )
 
 PORT = config.PORT
@@ -69,10 +70,14 @@ async def lifespan(app: FastAPI):
     # requests once the socket goes quiet, so without this sweep nothing would
     # ever arrive to correct a screen that is still showing a live-looking ETA.
     tracker = asyncio.create_task(trip_watcher())
+    # A platelet donor was promised a ride home the moment their arrival was
+    # confirmed. That 15-minute window has to be closed by the server on its
+    # own clock, or a restart mid-window would quietly drop the promise.
+    bounties = asyncio.create_task(bounty_watcher())
     try:
         yield
     finally:
-        for task in (tracker, watcher, connector):
+        for task in (bounties, tracker, watcher, connector):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
@@ -152,6 +157,9 @@ app.include_router(
 )
 app.include_router(
     golden.router, prefix="/api", tags=["Module 3.3 — Golden Donor Verification"]
+)
+app.include_router(
+    bounty.router, prefix="/api", tags=["Module 3.4 — Ride Community Bounty"]
 )
 app.include_router(cbc_triage.router, prefix="/api", tags=["CBC Triage"])
 app.include_router(admin.router, prefix="/api", tags=["Admin — Role & Access Management"])

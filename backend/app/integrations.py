@@ -717,24 +717,79 @@ def ride_sharing_configured() -> bool:
     """True when a partner API key for ride subsidization is present."""
     return bool(os.getenv("RIDE_PARTNER_API_KEY"))
 
-async def generate_ride_promo(hospital: str) -> dict:
-    """Generate a digital promo code for a subsidized ride home.
-    Returns: {"promo_code": str, "partner": str, "simulated": bool}
+
+# Crockford-style alphabet: no O/0, no I/1. A tired donor reads this code off a
+# phone screen to a driver at a kerbside, and a code that cannot be misheard is
+# worth more than the two extra characters of entropy that 0/O would add.
+_PROMO_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_PROMO_BLOCK = 4
+_PROMO_BLOCKS = 2
+
+
+def new_promo_code(prefix: Optional[str] = None) -> str:
+    """A fresh random ride-home code, e.g. `SPONDON-RIDE-K7M2-QX9P`.
+
+    Every donor gets their own code — never a shared house coupon. `secrets`
+    rather than `random` because a guessable code is a free ride for anyone who
+    can count, and the whole subsidy is drawn against a partner's budget.
     """
-    if not ride_sharing_configured():
-        return {
-            "promo_code": "SPONDON-HERO-MOCK",
-            "partner": "Pathao (Simulated)",
-            "simulated": True,
-        }
-    
-    # In a real integration, we would POST to the partner's B2B voucher API.
-    # For now, simulate the B2B API response.
-    import uuid
-    code = str(uuid.uuid4())[:8].upper()
-    return {
-        "promo_code": f"PATHAO-{code}",
-        "partner": "Pathao",
-        "simulated": False,
+    prefix = (prefix or config.BOUNTY_PROMO_PREFIX).strip("-").upper() or "SPONDON"
+    blocks = [
+        "".join(secrets.choice(_PROMO_ALPHABET) for _ in range(_PROMO_BLOCK))
+        for _ in range(_PROMO_BLOCKS)
+    ]
+    return f"{prefix}-RIDE-" + "-".join(blocks)
+
+
+async def generate_ride_promo(hospital: str, *, donor_name: str = "") -> dict:
+    """Mint a subsidised ride-home code for one donor.
+
+    Returns `{promo_code, partner, value_bdt, ttl_hours, simulated}`. The code
+    is randomly generated either way — with no partner key the *booking* is
+    simulated, but the donor still gets a real, unique code rather than a
+    placeholder string that a second donor would also be shown.
+    """
+    partner = config.RIDE_PARTNERS[0] if config.RIDE_PARTNERS else "Pathao"
+    code = new_promo_code()
+    payload = {
+        "promo_code": code,
+        "partner": partner,
+        "value_bdt": config.BOUNTY_PROMO_VALUE_BDT,
+        "ttl_hours": config.BOUNTY_PROMO_TTL_HOURS,
+        "simulated": True,
     }
+
+    if not ride_sharing_configured():
+        return payload
+
+    # With a partner key present, register the voucher against the partner's
+    # B2B API so their app will actually honour it. A failure here is not fatal:
+    # the donor keeps the locally-minted code and support can redeem it by hand,
+    # which is a far better outcome than no ride at all.
+    url = os.getenv("RIDE_PARTNER_API_URL")
+    if not url:
+        payload["simulated"] = False
+        return payload
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {os.getenv('RIDE_PARTNER_API_KEY')}"},
+                json={
+                    "code": code,
+                    "value_bdt": payload["value_bdt"],
+                    "valid_for_hours": payload["ttl_hours"],
+                    "pickup": hospital,
+                    "reference": f"Spondon platelet donor{f' — {donor_name}' if donor_name else ''}",
+                },
+            )
+            resp.raise_for_status()
+            body = resp.json() if resp.content else {}
+        payload["promo_code"] = body.get("code") or code
+        payload["partner"] = body.get("partner") or partner
+        payload["simulated"] = False
+    except Exception:
+        log.warning("Ride partner voucher API failed — issuing local code %s", code,
+                    exc_info=True)
+    return payload
 
