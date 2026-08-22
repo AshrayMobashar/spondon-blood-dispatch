@@ -33,6 +33,12 @@ services:
       # call this API from a signed-in user's browser.
       - key: CORS_ORIGINS
         sync: false
+      # Optional. Google Maps Routes API key — real driving distance for the
+      # geo-ripple, so a river with no bridge is not counted as 300 m. Leave it
+      # unset and the API falls back to great-circle distance and reports
+      # `maps: false` with a reason, rather than failing a dispatch.
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
 
       # ── Generated once by Render, then stable across deploys ──
       # Rotating this would invalidate every issued session token.

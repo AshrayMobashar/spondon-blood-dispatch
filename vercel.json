@@ -18,6 +18,20 @@
             }
         },
         {
+            "source": "/ws(/.*)?",
+            "destination": {
+                "type": "service",
+                "service": "backend"
+            }
+        },
+        {
+            "source": "/(docs|redoc|openapi.json)",
+            "destination": {
+                "type": "service",
+                "service": "backend"
+            }
+        },
+        {
             "source": "/(.*)",
             "destination": {
                 "type": "service",

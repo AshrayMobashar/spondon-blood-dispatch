@@ -18,7 +18,7 @@ from pymongo.errors import PyMongoError
 
 import jwt
 
-from . import config, db as db_module, integrations, zones
+from . import config, db as db_module, integrations, serverless, zones
 from . import tracking as app_tracking
 from .bounty import bounty_watcher
 from .dispatch import escalation_watcher
@@ -56,6 +56,19 @@ async def trip_watcher() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # On a serverless host the three watchers below are worse than useless: the
+    # instance is suspended between requests, so their sleeps do not reliably
+    # wake, and any that do burn billed time on an idle instance. There, the
+    # same four sweeps are driven off incoming requests instead — see
+    # `serverless.nudge`. Every other deployment keeps the timers.
+    if serverless.ON_SERVERLESS:
+        log.info("Serverless host detected — sweeps run per-request, not on timers.")
+        # Awaited, not raced: a cold instance can be handed a request the
+        # instant this returns, and a background connect would still be
+        # resolving Atlas then — reporting a healthy database as down.
+        await db_module.ensure_connected()
+        yield
+        return
     # Start even if Mongo is down, and keep trying in the background. A server
     # that exits on a missing database leaves the browser saying "cannot reach
     # the backend" — which sends you to restart an API that was never the
@@ -113,17 +126,26 @@ async def require_database(request: Request, call_next):
     milliseconds instead of after a connection timeout.
     """
     if not db_module.ready and request.url.path not in _DB_FREE_PATHS:
+        # On serverless there is no retry loop running between requests, so a
+        # connection lost while the instance slept has to be rebuilt here or
+        # every subsequent request 503s for the life of the instance.
+        if serverless.ON_SERVERLESS:
+            await db_module.ensure_connected()
+    if not db_module.ready and request.url.path not in _DB_FREE_PATHS:
         return JSONResponse(
             status_code=503,
             content={
                 "detail": {
                     "message": "The database is unavailable — the API is running but "
                                "cannot reach MongoDB.",
-                    "hint": f"Start MongoDB ({db_module.MONGODB_URI}); the API reconnects "
+                    "hint": f"Start MongoDB ({db_module.safe_uri()}); the API reconnects "
                             "on its own, no restart needed.",
                 }
             },
         )
+    # No-op off serverless. There, this is what actually runs the escalation,
+    # trip, call and bounty sweeps; it does not block this request.
+    serverless.nudge()
     return await call_next(request)
 
 
@@ -184,7 +206,7 @@ async def database_unavailable(request: Request, exc: Exception):
             "detail": {
                 "message": "The database is unavailable — the API is running but cannot "
                            "reach MongoDB.",
-                "hint": f"Check that MongoDB is running on {db_module.MONGODB_URI}.",
+                "hint": f"Check that MongoDB is running on {db_module.safe_uri()}.",
                 "error": str(exc)[:300],
             }
         },
@@ -206,7 +228,7 @@ async def health():
         content={
             "api": "ok",
             "database": "ok" if ok else "unreachable",
-            "database_uri": db_module.MONGODB_URI,
+            "database_uri": db_module.safe_uri(),
             "error": error,
         },
     )

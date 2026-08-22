@@ -1,0 +1,20 @@
+# Everything the function does not need at runtime. The virtualenv especially:
+# Vercel installs from requirements.txt on its own Linux image, and shipping a
+# Windows .venv would both blow the upload limit and be unusable there.
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+
+# Dev scripts, ad-hoc probes and the Postman workspace.
+test_*.py
+check_*.py
+clean_*.py
+clear_*.py
+fix_*.py
+mock_*.py
+smoke_test.py
+postman/
+.postman/
+Spondon.postman_collection.json

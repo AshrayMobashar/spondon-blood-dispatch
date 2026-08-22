@@ -26,6 +26,25 @@ DB_NAME = os.getenv("DB_NAME", "spondon")
 # broken". Fail fast and say so.
 SERVER_SELECTION_TIMEOUT_MS = int(os.getenv("MONGO_SERVER_SELECTION_TIMEOUT_MS", "4000"))
 
+def safe_uri(uri: str | None = None) -> str:
+    """`MONGODB_URI` with any password stripped out, safe to show a caller.
+
+    The health endpoint and the 503 hint both name the URI, because on a local
+    deployment "mongodb://localhost:27017" is the single most useful thing they
+    can tell you. A hosted deployment puts credentials in that same string, and
+    those two responses are public and unauthenticated — so the raw value must
+    never leave the process. Host and database name survive, which is all the
+    diagnostic value there ever was.
+    """
+    raw = uri if uri is not None else MONGODB_URI
+    scheme, sep, rest = raw.partition("://")
+    if not sep or "@" not in rest:
+        return raw                      # no credentials to strip
+    creds, _, host = rest.rpartition("@")
+    user, has_pw, _ = creds.partition(":")
+    return f"{scheme}://{user}{':***' if has_pw else ''}@{host}"
+
+
 client: AsyncIOMotorClient | None = None
 
 # Whether Beanie has been initialised against a live database.
@@ -54,6 +73,40 @@ async def init_db() -> None:
 def get_collection(model):
     """Raw Motor collection for a Beanie model (used for atomic operators)."""
     return model.get_motor_collection()
+
+
+#: Serialises the on-demand connect below, so a burst of requests arriving at a
+#: cold instance opens one client rather than one per request.
+_connect_lock: asyncio.Lock | None = None
+
+
+async def ensure_connected() -> bool:
+    """Connect now, awaiting the handshake, and report whether we got there.
+
+    The background retry above is right for an always-on process: the server
+    boots immediately, says the database is down, and heals itself. On a
+    serverless host that same race is a bug — a cold instance answers the very
+    first request while `init_db` is still resolving the Atlas SRV record, so a
+    perfectly healthy deployment reports "database unavailable" on every wake.
+
+    This is the version to await before deciding a request cannot be served.
+    Bounded by `SERVER_SELECTION_TIMEOUT_MS`, so a database that really is gone
+    still fails in seconds rather than hanging the request.
+    """
+    global _connect_lock
+    if ready:
+        return True
+    if _connect_lock is None:
+        _connect_lock = asyncio.Lock()
+    async with _connect_lock:
+        if ready:                       # won by whoever held the lock first
+            return True
+        try:
+            await init_db()
+        except Exception as exc:
+            log.error("Database connect failed: %s", str(exc)[:200])
+            return False
+    return True
 
 
 async def connect_with_retry(interval_seconds: int = 5) -> None:
