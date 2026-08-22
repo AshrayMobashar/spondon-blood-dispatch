@@ -22,4 +22,7 @@ EXPOSE 1184
 # this too; the default keeps a bare `docker run --link`/network run working.
 ENV MONGODB_URI=mongodb://mongo:27017
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "1184"]
+# Shell form so $PORT expands at runtime. Render (and most PaaS hosts) assign a
+# port dynamically and require the process to bind to it; the 1184 fallback
+# keeps `docker compose up` and a bare `docker run` behaving exactly as before.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-1184}"]

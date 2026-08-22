@@ -1,0 +1,74 @@
+# Render blueprint — the Spondon API as a single always-on web service.
+#
+# The API cannot run as serverless functions: three background sweepers
+# (escalation, trip, ride-bounty) are `while True` loops on 5-20 second
+# intervals, and three WebSocket endpoints (/ws/dispatch, /ws/trip, /ws/call)
+# need a connection held open. Both require a real process, which is what a
+# Render web service is and what a serverless function is not.
+#
+# Deploy:  Render dashboard -> New -> Blueprint -> point at this repo.
+# Then set the two `sync: false` secrets below in the service's Environment tab.
+services:
+  - type: web
+    name: spondon-api
+    runtime: docker
+    plan: free
+    # Closest free region to Dhaka; Sleep Mode windows are Asia/Dhaka wall-clock.
+    region: singapore
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    # `/` deliberately, NOT `/api/health`. Health is a *diagnostic* endpoint and
+    # reports 503 while Mongo is unreachable; wiring it to the liveness probe
+    # would make Render restart-loop the API during a database blip — the exact
+    # misdiagnosis the app's 503-with-a-reason design exists to prevent. `/` is
+    # in the app's DB-free path set and answers 200 whenever the process is up.
+    healthCheckPath: /
+    envVars:
+      # ── Secrets: set these by hand in the Render dashboard ──
+      # MongoDB Atlas SRV string. Never committed — it carries a password.
+      - key: MONGODB_URI
+        sync: false
+      # The deployed frontend origin, e.g. https://spondon.vercel.app
+      # Comma-separated. A wildcard here would let any page on the internet
+      # call this API from a signed-in user's browser.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # ── Generated once by Render, then stable across deploys ──
+      # Rotating this would invalidate every issued session token.
+      - key: JWT_SECRET
+        generateValue: true
+
+      # ── Plain configuration ──
+      - key: DB_NAME
+        value: spondon
+      - key: APP_TIMEZONE
+        value: Asia/Dhaka
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+      # Eligibility rules
+      - key: WHOLE_BLOOD_COOLDOWN_DAYS
+        value: "120"
+      - key: PLATELET_COOLDOWN_DAYS
+        value: "14"
+      - key: MIN_DONOR_WEIGHT_KG
+        value: "50"
+
+      # Rare-blood escalation
+      - key: RARE_ESCALATION_SECONDS
+        value: "180"
+      - key: ESCALATION_SWEEP_SECONDS
+        value: "20"
+      - key: RARE_SMS_ALERTS
+        value: "true"
+
+      # Post-Donation Ride Community Bounty
+      - key: BOUNTY_WINDOW_MINUTES
+        value: "15"
+      - key: BOUNTY_RADIUS_KM
+        value: "5.0"
+      - key: BOUNTY_SWEEP_SECONDS
+        value: "15"
+      - key: RIDE_PARTNERS
+        value: Pathao,Uber
