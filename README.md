@@ -5,6 +5,14 @@ Spondon connects patients with the nearest eligible donor using spatial matching
 biological compatibility, and real-time emergency pings — replacing the chaos of
 social-media blood appeals during Dengue season.
 
+## Deploying
+
+Frontend on Vercel, API on Render, database on MongoDB Atlas. The API needs an
+always-on process — three background sweepers and three WebSocket endpoints —
+so it cannot run as serverless functions. Full walkthrough in
+[DEPLOYMENT.md](DEPLOYMENT.md); `render.yaml` and `frontend/vercel.json` hold
+the configuration.
+
 ## Repository structure
 
 ```
